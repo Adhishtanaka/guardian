@@ -20,8 +20,12 @@ function ping(reason) {
   const now = Date.now();
   if (now - lastPing < MIN_GAP_MS) return;
   lastPing = now;
-  chrome.runtime.sendMessage({ type: 'pageChanged', reason }).catch(() => {
-    /* service worker asleep — it will pick the page up on the next event */
+  send('pageChanged', reason);
+}
+
+function send(type, reason) {
+  chrome.runtime.sendMessage({ type, reason }).catch(() => {
+    /* service worker asleep - it will pick the page up on the next event */
   });
 }
 
@@ -51,3 +55,35 @@ for (const m of ['pushState', 'replaceState']) {
 
 // Coming back to a backgrounded tab is a good moment to re-check.
 addEventListener('visibilitychange', () => { if (!document.hidden) ping('visible'); });
+
+/**
+ * Video needs its own timer. While a video plays, the page does not navigate and
+ * its DOM barely changes, so neither the navigation events nor the mutation
+ * observer above will ever fire again — yet the thing on screen is completely
+ * different a minute later. Nothing else in the extension would notice.
+ */
+let videoTimer = null;
+
+function anyVideoPlaying() {
+  for (const v of document.querySelectorAll('video')) {
+    if (!v.paused && !v.ended && v.readyState > 2 && v.currentTime > 0) return true;
+  }
+  return false;
+}
+
+async function startVideoWatch() {
+  const s = await chrome.runtime.sendMessage({ type: 'getSettings' }).catch(() => null);
+  const secs = s?.videoRescanSeconds ?? 20;
+  if (!secs || videoTimer) return;
+  videoTimer = setInterval(() => {
+    if (document.hidden || !anyVideoPlaying()) return;   // never scan a hidden tab
+    // Sent as its own message type rather than through ping(), because the timed
+    // check must not be swallowed by the debounce that protects ordinary pages.
+    send('videoTick', 'video');
+  }, secs * 1000);
+}
+
+// Only start the timer once a video actually plays, so ordinary pages pay nothing.
+document.addEventListener('play', startVideoWatch, true);
+// Videos already playing when the script loads (a reloaded tab, a restored session).
+setTimeout(() => { if (anyVideoPlaying()) startVideoWatch(); }, 3000);

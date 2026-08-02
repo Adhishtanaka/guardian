@@ -182,6 +182,28 @@ function showWarning(label, probs, host) {
   };
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function capture(tab, opts) {
+  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  return chrome.runtime.sendMessage({ type: 'classify', dataUrl, opts });
+}
+
+/**
+ * Combine two scans of the same page, safety first: take the higher probability for
+ * each risky class. A page that looked unsafe in either frame is treated as unsafe,
+ * and one that looked safe twice keeps its safe verdict.
+ */
+function mergeVerdicts(a, b) {
+  const probs = {};
+  for (const k of Object.keys(a.probs)) probs[k] = Math.max(a.probs[k], b.probs[k]);
+  const risky = ['nsfw', 'malicious'].filter((c) => a.label === c || b.label === c);
+  const label = risky.length
+    ? risky.reduce((x, y) => (probs[x] >= probs[y] ? x : y))
+    : a.label;
+  return { ...a, probs, label, confirmed: a.label === b.label, scans: 2 };
+}
+
 async function scanTab(tabId, url, force = false) {
   const now = Date.now();
   if (scanning || now - lastScanAt < COOLDOWN_MS) return;
@@ -189,8 +211,8 @@ async function scanTab(tabId, url, force = false) {
   // so they pass force and bypass the "already judged this URL" cache.
   if (!force && RECENT.get(tabId)?.url === url) return;
 
-  const { autoScan } = await getSettings();
-  if (!autoScan) return;
+  const settings = await getSettings();
+  if (!settings.autoScan) return;
 
   let host = '';
   try { host = new URL(url).hostname; } catch { /* not a normal page */ }
@@ -227,9 +249,27 @@ async function scanTab(tabId, url, force = false) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab.active) return;                       // captureVisibleTab needs the active tab
 
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    const opts = settings.safetyNet ? {
+      ruleBoost: settings.ruleBoostOverride,
+      nsfwThreshold: settings.nsfwThreshold,
+      maliciousThreshold: settings.maliciousThreshold,
+    } : {};
+
     await ensureOffscreen();
-    const res = await chrome.runtime.sendMessage({ type: 'classify', dataUrl });
+    let res = await capture(tab, opts);
+
+    // Confirmation scan. A single frame can be wrong for reasons that have nothing
+    // to do with the model: the page was still painting, a video was mid-transition,
+    // or OCR caught the page before the text rendered. Rather than act on one frame,
+    // look again and take the more cautious of the two.
+    if (settings.confirmScan && res && !res.error
+        && (res.label !== 'normal' || res.uncertain)) {
+      await sleep(900);
+      const second = await capture(tab, opts);
+      if (second && !second.error) {
+        res = mergeVerdicts(res, second);
+      }
+    }
 
     if (!res || res.error) {
       await setBadge(tabId, 'error'); painted = true;
@@ -301,6 +341,20 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     const { id, url } = sender.tab;
     if (url && /^https?:/.test(url)) scanTab(id, url, true);
     return false;
+  }
+
+  // A playing video changes what is on screen continuously while the page itself
+  // never reloads and its DOM barely moves, so neither navigation nor the mutation
+  // observer would ever fire again. The content script reports a tick instead.
+  if (msg?.type === 'videoTick' && sender.tab) {
+    const { id, url } = sender.tab;
+    if (url && /^https?:/.test(url)) scanTab(id, url, true);
+    return false;
+  }
+
+  if (msg?.type === 'getSettings') {
+    getSettings().then(respond);
+    return true;
   }
 
   // The blocked-page overlay asks us to check the PIN. Verification happens here

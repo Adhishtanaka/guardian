@@ -21,7 +21,7 @@ async function getWorker() {
   return tesseractWorker;
 }
 
-async function run(dataUrl) {
+async function run(dataUrl, opts) {
   await init();
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
 
@@ -34,12 +34,12 @@ async function run(dataUrl) {
     // exactly so it degrades gracefully when OCR is unavailable.
     console.warn('OCR failed, image-only:', e);
   }
-  return classify(bitmap, text);
+  return classify(bitmap, text, opts || {});
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (msg?.type !== 'classify') return false;
-  run(msg.dataUrl)
+  run(msg.dataUrl, msg.opts)
     .then(respond)
     .catch((e) => respond({ error: String(e?.message || e) }));
   return true;   // keep the channel open for the async reply

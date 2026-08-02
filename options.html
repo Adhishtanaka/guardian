@@ -61,6 +61,35 @@
         </div>
         <div class="row">
           <div>
+            <div class="label">Keyword safety net</div>
+            <div class="sub">Blocks when the page text plainly says what it is, even if the
+              picture looks ordinary. Catches search results for explicit terms.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="safetyNet" /><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">Double-check before blocking</div>
+            <div class="sub">Takes a second look at anything flagged or borderline, and uses
+              the more cautious of the two results.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="confirmScan" /><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">Re-check videos every</div>
+            <div class="sub">A playing video never reloads the page, so it is checked on a timer.</div>
+          </div>
+          <select id="videoRescanSeconds">
+            <option value="10">10 seconds</option>
+            <option value="20">20 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">60 seconds</option>
+            <option value="0">never</option>
+          </select>
+        </div>
+        <div class="row">
+          <div>
             <div class="label">Model</div>
             <div class="sub" id="modelInfo">loading…</div>
           </div>
