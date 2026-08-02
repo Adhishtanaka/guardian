@@ -13,6 +13,7 @@
   "dependencies": {
     "@litertjs/core": "^2.5.3",
     "acorn": "^8.18.0",
+    "driver.js": "^1.8.0",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
