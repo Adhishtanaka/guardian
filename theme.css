@@ -1,0 +1,171 @@
+/* Guardian — white/green light theme with a dark counterpart.
+   Every colour is a custom property so [data-theme] can swap the whole page. */
+
+:root {
+  --bg: #f4f7f5;
+  --surface: #ffffff;
+  --surface-2: #f8faf9;
+  --text: #13211a;
+  --muted: #5e6f66;
+  --border: #e1e8e4;
+  --primary: #16a34a;
+  --primary-hover: #15803d;
+  --primary-soft: #e8f6ee;
+  --danger: #dc2626;
+  --danger-soft: #fdeaea;
+  --warn: #ea580c;
+  --warn-soft: #fdf0e6;
+  --shadow: 0 1px 2px rgba(16, 32, 24, .06), 0 8px 24px rgba(16, 32, 24, .06);
+  --radius: 12px;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0c1210;
+  --surface: #141d18;
+  --surface-2: #18231d;
+  --text: #e7efea;
+  --muted: #94a69b;
+  --border: #25332b;
+  --primary: #22c55e;
+  --primary-hover: #16a34a;
+  --primary-soft: #12291c;
+  --danger: #f87171;
+  --danger-soft: #2a1516;
+  --warn: #fb923c;
+  --warn-soft: #2a1c11;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 760px; margin: 0 auto; padding: 32px 24px 72px; }
+
+/* --- header --- */
+.masthead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.masthead img { width: 36px; height: 36px; }
+.masthead h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+.tagline { color: var(--muted); font-size: 13px; margin: 0 0 26px 48px; }
+
+/* --- cards --- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+.card h2 {
+  margin: 0 0 4px; font-size: 15px; font-weight: 650;
+  display: flex; align-items: center; gap: 8px;
+}
+.card .hint { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+
+/* --- controls --- */
+.row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 11px 0; border-top: 1px solid var(--border);
+}
+.row:first-of-type { border-top: 0; }
+.row .label { font-size: 14px; }
+.row .sub { color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+
+.switch { position: relative; width: 42px; height: 24px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; inset: 0; cursor: pointer; border-radius: 24px;
+  background: var(--border); transition: background .18s;
+}
+.slider::before {
+  content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px;
+  background: #fff; border-radius: 50%; transition: transform .18s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+}
+.switch input:checked + .slider { background: var(--primary); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+button {
+  font: inherit; font-size: 14px; font-weight: 550; cursor: pointer;
+  border-radius: 9px; padding: 9px 16px; border: 1px solid transparent;
+  background: var(--primary); color: #fff; transition: background .15s;
+}
+button:hover { background: var(--primary-hover); }
+button.ghost { background: transparent; color: var(--text); border-color: var(--border); }
+button.ghost:hover { background: var(--surface-2); }
+button.danger { background: transparent; color: var(--danger); border-color: var(--border); }
+button.danger:hover { background: var(--danger-soft); }
+button:disabled { opacity: .5; cursor: default; }
+
+input[type="text"], input[type="password"], select {
+  font: inherit; font-size: 14px; padding: 9px 12px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  min-width: 0;
+}
+input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+
+.field { display: flex; gap: 8px; }
+.field input { flex: 1; }
+.checkline { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
+
+/* --- lists --- */
+.list { list-style: none; margin: 14px 0 0; padding: 0; }
+.list li {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px;
+}
+.list .grow { flex: 1; min-width: 0; }
+.list .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.empty { color: var(--muted); font-size: 13.5px; padding: 18px 0; text-align: center; }
+
+.pill {
+  font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px; flex: none;
+}
+.pill.nsfw { background: var(--danger-soft); color: var(--danger); }
+.pill.malicious { background: var(--warn-soft); color: var(--warn); }
+.pill.normal { background: var(--primary-soft); color: var(--primary); }
+
+/* --- notice --- */
+.notice {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px; padding: 13px 15px; font-size: 13px; color: var(--muted);
+  margin-top: 14px;
+}
+.notice strong { color: var(--text); }
+
+/* --- lock screen --- */
+.lock {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.lock-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: var(--shadow); padding: 34px 32px; width: 100%; max-width: 380px; text-align: center;
+}
+.lock-card img { width: 52px; height: 52px; margin-bottom: 14px; }
+.lock-card h1 { margin: 0 0 6px; font-size: 19px; }
+.lock-card p { color: var(--muted); font-size: 13.5px; margin: 0 0 20px; }
+.lock-card input {
+  width: 100%; text-align: center; letter-spacing: 8px; font-size: 20px; padding: 12px;
+  margin-bottom: 10px;
+}
+.lock-card button { width: 100%; padding: 11px; }
+.error { color: var(--danger); font-size: 13px; min-height: 19px; margin: 8px 0 0; }
+.linkish {
+  background: none; border: 0; color: var(--muted); font-size: 12.5px;
+  text-decoration: underline; padding: 10px 0 0; width: auto;
+}
+.linkish:hover { background: none; color: var(--text); }
+[hidden] { display: none !important; }
