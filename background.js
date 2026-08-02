@@ -7,6 +7,8 @@
  * every time.
  */
 
+import { getSettings, getAllowList, isAllowed, recordFlagged } from './store.js';
+
 const OFFSCREEN = 'offscreen.html';
 const RECENT = new Map();          // tabId -> { url, verdict }
 const COOLDOWN_MS = 4000;
@@ -14,7 +16,8 @@ let lastScanAt = 0;
 let scanning = false;
 
 const BADGE = {
-  normal: { text: 'OK', color: '#2f9e44' },
+  normal: { text: 'OK', color: '#16a34a' },
+  allowed: { text: '\u2713', color: '#64748b' },
   nsfw: { text: '18+', color: '#e03131' },
   malicious: { text: '!', color: '#f08c00' },
   error: { text: '?', color: '#868e96' },
@@ -71,8 +74,17 @@ async function scanTab(tabId, url) {
   if (scanning || now - lastScanAt < COOLDOWN_MS) return;
   if (RECENT.get(tabId)?.url === url) return;      // already judged this page
 
-  const { autoScan = true } = await chrome.storage.local.get('autoScan');
+  const { autoScan } = await getSettings();
   if (!autoScan) return;
+
+  // Allowed sites are skipped entirely: not captured, not scanned, not recorded.
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* not a normal page */ }
+  if (host && isAllowed(host, await getAllowList())) {
+    RECENT.set(tabId, { url, verdict: { label: 'allowed' } });
+    await setBadge(tabId, 'allowed');
+    return;
+  }
 
   scanning = true;
   lastScanAt = now;
@@ -93,7 +105,9 @@ async function scanTab(tabId, url) {
     RECENT.set(tabId, { url, verdict: res });
     await setBadge(tabId, res.label);
 
-    const { blockFlagged = true } = await chrome.storage.local.get('blockFlagged');
+    if (res.label !== 'normal') await recordFlagged(url, res);   // history: flagged only
+
+    const { blockFlagged } = await getSettings();
     if (blockFlagged && res.label !== 'normal') {
       chrome.scripting.executeScript({
         target: { tabId },
@@ -118,18 +132,10 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => RECENT.delete(tabId));
 
-// The popup asks for whatever we already decided about the visible tab.
-chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
-  if (msg.type === 'getVerdict') {
-    respond(RECENT.get(msg.tabId)?.verdict || null);
-    return true;
-  }
-  if (msg.type === 'rescan') {
-    RECENT.delete(msg.tabId);
-    lastScanAt = 0;
-    chrome.tabs.get(msg.tabId).then((t) => scanTab(msg.tabId, t.url));
-    respond({ ok: true });
-    return true;
-  }
-  return false;
+// The toolbar icon opens the settings page; there is no popup any more.
+chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+
+// Adding or removing an allowed site should take effect without a browser restart.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.allowList) RECENT.clear();
 });
