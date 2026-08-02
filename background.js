@@ -15,13 +15,17 @@ const COOLDOWN_MS = 4000;
 let lastScanAt = 0;
 let scanning = false;
 
-const BADGE = {
-  normal: { text: 'OK', color: '#16a34a' },
-  allowed: { text: '\u2713', color: '#64748b' },
-  nsfw: { text: '18+', color: '#e03131' },
-  malicious: { text: '!', color: '#f08c00' },
-  error: { text: '?', color: '#868e96' },
+// Each verdict gets its own icon as well as a badge — colour on the icon is
+// readable at a glance, where a 3-character badge is not.
+const STATE = {
+  normal:    { text: 'OK',  color: '#16a34a', title: 'This page looks fine' },
+  allowed:   { text: '',    color: '#64748b', title: 'Allowed site — not scanned' },
+  nsfw:      { text: '18+', color: '#dc2626', title: 'Adult content detected' },
+  malicious: { text: '!',   color: '#ea580c', title: 'Suspicious page detected' },
+  error:     { text: '?',   color: '#94a3b2', title: "Couldn't check this page" },
 };
+const statePath = (name) => Object.fromEntries(
+  [16, 32, 48, 128].map((s) => [s, `icons/state/${name}${s}.png`]));
 
 async function ensureOffscreen() {
   if (await chrome.offscreen.hasDocument()) return;
@@ -52,16 +56,20 @@ function startScanAnimation(tabId) {
   }, 90);
 }
 
-function stopScanAnimation(tabId) {
+// Only stops the timer. It must NOT restore an icon: setBadge has usually already
+// painted the verdict icon by this point, and resetting here would wipe it.
+function stopScanAnimation() {
   if (animTimer) { clearInterval(animTimer); animTimer = null; }
-  if (tabId != null) chrome.action.setIcon({ tabId, path: IDLE_ICON }).catch(() => {});
 }
 
 async function setBadge(tabId, kind) {
-  const b = BADGE[kind] || BADGE.error;
+  const st = STATE[kind] || STATE.error;
+  const name = STATE[kind] ? kind : 'error';
   try {
-    await chrome.action.setBadgeText({ tabId, text: b.text });
-    await chrome.action.setBadgeBackgroundColor({ tabId, color: b.color });
+    await chrome.action.setIcon({ tabId, path: statePath(name) });
+    await chrome.action.setBadgeText({ tabId, text: st.text });
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: st.color });
+    await chrome.action.setTitle({ tabId, title: `Guardian — ${st.title}` });
   } catch { /* tab closed */ }
 }
 
@@ -116,6 +124,7 @@ async function scanTab(tabId, url, force = false) {
   scanning = true;
   lastScanAt = now;
   startScanAnimation(tabId);
+  let painted = false;                             // did we set a verdict icon?
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab.active) return;                       // captureVisibleTab needs the active tab
@@ -125,13 +134,13 @@ async function scanTab(tabId, url, force = false) {
     const res = await chrome.runtime.sendMessage({ type: 'classify', dataUrl });
 
     if (!res || res.error) {
-      await setBadge(tabId, 'error');
+      await setBadge(tabId, 'error'); painted = true;
       RECENT.set(tabId, { url, verdict: { label: 'error', error: res?.error } });
       return;
     }
 
     RECENT.set(tabId, { url, verdict: res });
-    await setBadge(tabId, res.label);
+    await setBadge(tabId, res.label); painted = true;
 
     if (res.label !== 'normal') await recordFlagged(url, res);   // history: flagged only
 
@@ -145,9 +154,11 @@ async function scanTab(tabId, url, force = false) {
     }
   } catch (e) {
     console.warn('scan failed:', e);
-    await setBadge(tabId, 'error');
+    await setBadge(tabId, 'error'); painted = true;
   } finally {
-    stopScanAnimation(tabId);
+    stopScanAnimation();
+    // nothing decided (e.g. tab went inactive mid-scan) — leave the plain shield
+    if (!painted) chrome.action.setIcon({ tabId, path: IDLE_ICON }).catch(() => {});
     scanning = false;
   }
 }
