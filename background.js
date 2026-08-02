@@ -16,6 +16,7 @@ import { verifyPin, remainingLockout } from './auth.js';
 const OFFSCREEN = 'offscreen.html';
 const RECENT = new Map();          // tabId -> { url, verdict }
 const BYPASS = new Set();          // "tabId|url" the parent unlocked with the PIN
+const VIDEO_TABS = new Set();      // tabs where a video is playing and being watched
 let LAST_SCAN = null;              // diagnostics for the settings page
 const bypassKey = (tabId, url) => `${tabId}|${url}`;
 const COOLDOWN_MS = 4000;
@@ -30,6 +31,8 @@ const STATE = {
   nsfw:      { text: '18+', color: '#dc2626', title: 'Adult content detected' },
   malicious: { text: '!',   color: '#ea580c', title: 'Suspicious page detected' },
   error:     { text: '?',   color: '#94a3b2', title: "Couldn't check this page" },
+  video:     { text: '\u25B6', color: '#0ea5e9',
+               title: 'Video playing - re-checking on a timer' },
 };
 const statePath = (name) => Object.fromEntries(
   [16, 32, 48, 128].map((s) => [s, `icons/state/${name}${s}.png`]));
@@ -70,6 +73,10 @@ function stopScanAnimation() {
 }
 
 async function setBadge(tabId, kind) {
+  // A clean page that is playing video shows the video state instead, so the parent
+  // can see it is being watched on a timer. A flagged verdict always wins: safety
+  // information must never be replaced by status information.
+  if (kind === 'normal' && VIDEO_TABS.has(tabId)) kind = 'video';
   const st = STATE[kind] || STATE.error;
   const name = STATE[kind] ? kind : 'error';
   try {
@@ -186,6 +193,13 @@ function showWarning(label, probs, host) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function capture(tab, opts) {
+  // A tab can close between the scan starting and the capture, which surfaces as
+  // "Unchecked runtime.lastError: No tab with id". Confirm it is still there.
+  try {
+    await chrome.tabs.get(tab.id);
+  } catch {
+    return { error: 'tab closed' };
+  }
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
   return chrome.runtime.sendMessage({ type: 'classify', dataUrl, opts });
 }
@@ -319,6 +333,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   // which is what makes reloads and normal navigation re-scan.
   if (info.status === 'loading') {
     RECENT.delete(tabId);
+    VIDEO_TABS.delete(tabId);          // a new page has no video until it says so
     // a one-time unlock applies to one page only
     for (const k of BYPASS) if (k.startsWith(`${tabId}|`)) BYPASS.delete(k);
     return;
@@ -360,7 +375,23 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   // observer would ever fire again. The content script reports a tick instead.
   if (msg?.type === 'videoTick' && sender.tab) {
     const { id, url } = sender.tab;
+    VIDEO_TABS.add(id);
     if (url && /^https?:/.test(url)) scanTab(id, url, true);
+    return false;
+  }
+
+  // Sent as soon as a video starts, so the icon changes immediately rather than
+  // waiting for the first timed re-check.
+  if (msg?.type === 'videoStarted' && sender.tab) {
+    VIDEO_TABS.add(sender.tab.id);
+    const known = RECENT.get(sender.tab.id);
+    setBadge(sender.tab.id, known?.verdict?.label || 'normal');
+    return false;
+  }
+  if (msg?.type === 'videoStopped' && sender.tab) {
+    VIDEO_TABS.delete(sender.tab.id);
+    const known = RECENT.get(sender.tab.id);
+    if (known) setBadge(sender.tab.id, known.verdict.label);
     return false;
   }
 
@@ -414,6 +445,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   RECENT.delete(tabId);
+  VIDEO_TABS.delete(tabId);
   for (const k of BYPASS) if (k.startsWith(`${tabId}|`)) BYPASS.delete(k);
 });
 
