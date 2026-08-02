@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node ../tools/test_guardian.mjs && node ../tools/test_tokenizer.mjs",
-    "build": "esbuild options.js --bundle --format=esm --platform=browser --outfile=options.bundle.js && esbuild offscreen.js --bundle --format=esm --platform=browser --outfile=offscreen.bundle.js"
+    "build": "esbuild options.js --bundle --format=esm --platform=browser --outfile=options.bundle.js && esbuild offscreen.js --bundle --format=esm --platform=browser --outfile=offscreen.bundle.js",
+    "icons": "node ../tools/make_icons.mjs"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +19,8 @@
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "@resvg/resvg-js": "^2.6.2",
+    "esbuild": "^0.28.1",
+    "lucide-static": "^1.28.0"
   }
 }
