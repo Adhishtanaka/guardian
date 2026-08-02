@@ -24,29 +24,43 @@ function ping(reason) {
   send('pageChanged', reason);
 }
 
+let orphaned = false;
+
+/**
+ * Reloading or updating the extension orphans every content script already running
+ * in a page. chrome.runtime.id becomes undefined and the next sendMessage throws
+ * "Extension context invalidated" SYNCHRONOUSLY, which .catch() cannot see, so it
+ * surfaces as an uncaught error on every open tab. Check first, guard anyway, and
+ * shut everything down permanently once it happens.
+ */
 function send(type, reason) {
-  // Reloading or updating the extension orphans every content script already in a
-  // page. The next sendMessage then throws "Extension context invalidated"
-  // SYNCHRONOUSLY, which .catch() cannot see, so it surfaces as an uncaught error
-  // on every open tab. Guard the call and stop the timers once orphaned.
+  if (orphaned) return;
+  if (!chrome.runtime?.id) { teardown(); return; }
   try {
     chrome.runtime.sendMessage({ type, reason }).catch(() => {
       /* service worker asleep - it will pick the page up on the next event */
     });
   } catch {
-    if (videoTimer) { clearInterval(videoTimer); videoTimer = null; }
-    if (timer) { clearTimeout(timer); timer = null; }
+    teardown();
   }
 }
 
+function teardown() {
+  orphaned = true;
+  if (videoTimer) { clearInterval(videoTimer); videoTimer = null; }
+  if (timer) { clearTimeout(timer); timer = null; }
+  if (domObserver) { domObserver.disconnect(); domObserver = null; }
+}
+
 // Structural change: a lot of new nodes appearing at once.
-new MutationObserver((records) => {
+let domObserver = new MutationObserver((records) => {
   let added = 0;
   for (const r of records) added += r.addedNodes.length;
   if (added < MIN_NODES) return;
   clearTimeout(timer);
   timer = setTimeout(() => ping('dom'), QUIET_MS);
-}).observe(document.documentElement, { childList: true, subtree: true });
+});
+domObserver.observe(document.documentElement, { childList: true, subtree: true });
 
 // SPA route changes that never reload the document.
 const seeUrl = () => {
@@ -80,16 +94,24 @@ function anyVideoPlaying() {
 }
 
 async function startVideoWatch() {
+  if (orphaned || videoTimer) return;
   let s = null;
   try {
     s = await chrome.runtime.sendMessage({ type: 'getSettings' }).catch(() => null);
-  } catch { return; }                       // orphaned content script
+  } catch { teardown(); return; }
   const secs = s?.videoRescanSeconds ?? 20;
-  if (!secs || videoTimer) return;
+  if (!secs) return;
+
+  send('videoStarted', 'video');            // change the icon now, not in 20s
   videoTimer = setInterval(() => {
-    if (document.hidden || !anyVideoPlaying()) return;   // never scan a hidden tab
-    // Sent as its own message type rather than through ping(), because the timed
-    // check must not be swallowed by the debounce that protects ordinary pages.
+    if (document.hidden) return;            // never scan a hidden tab
+    if (!anyVideoPlaying()) {               // playback ended or was paused
+      clearInterval(videoTimer); videoTimer = null;
+      send('videoStopped', 'video');
+      return;
+    }
+    // Its own message type rather than ping(), because a timed check must not be
+    // swallowed by the debounce that protects ordinary pages.
     send('videoTick', 'video');
   }, secs * 1000);
 }
