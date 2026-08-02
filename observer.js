@@ -13,6 +13,7 @@ const MIN_GAP_MS = 8000;  // never nag the background more often than this
 const MIN_NODES = 12;     // ignore small text/attribute churn
 
 let timer = null;
+let videoTimer = null;
 let lastPing = 0;
 let lastUrl = location.href;
 
@@ -24,9 +25,18 @@ function ping(reason) {
 }
 
 function send(type, reason) {
-  chrome.runtime.sendMessage({ type, reason }).catch(() => {
-    /* service worker asleep - it will pick the page up on the next event */
-  });
+  // Reloading or updating the extension orphans every content script already in a
+  // page. The next sendMessage then throws "Extension context invalidated"
+  // SYNCHRONOUSLY, which .catch() cannot see, so it surfaces as an uncaught error
+  // on every open tab. Guard the call and stop the timers once orphaned.
+  try {
+    chrome.runtime.sendMessage({ type, reason }).catch(() => {
+      /* service worker asleep - it will pick the page up on the next event */
+    });
+  } catch {
+    if (videoTimer) { clearInterval(videoTimer); videoTimer = null; }
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
 }
 
 // Structural change: a lot of new nodes appearing at once.
@@ -62,8 +72,6 @@ addEventListener('visibilitychange', () => { if (!document.hidden) ping('visible
  * observer above will ever fire again — yet the thing on screen is completely
  * different a minute later. Nothing else in the extension would notice.
  */
-let videoTimer = null;
-
 function anyVideoPlaying() {
   for (const v of document.querySelectorAll('video')) {
     if (!v.paused && !v.ended && v.readyState > 2 && v.currentTime > 0) return true;
@@ -72,7 +80,10 @@ function anyVideoPlaying() {
 }
 
 async function startVideoWatch() {
-  const s = await chrome.runtime.sendMessage({ type: 'getSettings' }).catch(() => null);
+  let s = null;
+  try {
+    s = await chrome.runtime.sendMessage({ type: 'getSettings' }).catch(() => null);
+  } catch { return; }                       // orphaned content script
   const secs = s?.videoRescanSeconds ?? 20;
   if (!secs || videoTimer) return;
   videoTimer = setInterval(() => {
