@@ -1688,6 +1688,23 @@ async function classify(bitmap, ocrText, opts = {}) {
 }
 
 // offscreen.js
+var BENIGN = [
+  /^INFO: \[/,
+  /^WARNING: \[npu_registry/,
+  /^ERROR: Following operations are not supported by GPU delegate/,
+  /^(GATHER|RESHAPE|STRIDED_SLICE):/,
+  /operations will run on the GPU/,
+  /Created TensorFlow Lite XNNPACK delegate/,
+  /Model not fully compiled for webgpu/
+];
+for (const level of ["error", "warn", "log"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    const first = typeof args[0] === "string" ? args[0] : "";
+    if (BENIGN.some((re) => re.test(first))) return;
+    original(...args);
+  };
+}
 var tesseractWorker = null;
 async function getWorker() {
   if (tesseractWorker) return tesseractWorker;

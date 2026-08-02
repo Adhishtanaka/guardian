@@ -4,6 +4,33 @@
  */
 import { init, classify } from './pipeline.js';
 
+/**
+ * LiteRT's C++ core logs its startup through Emscripten, which routes stderr to
+ * console.error. DevTools then paints ordinary INFO lines red and they look like
+ * crashes. LiteRT exposes no log-level option, so filter the handful of known
+ * benign lines here.
+ *
+ * Deliberately narrow: only these exact prefixes are dropped, so a real error is
+ * still shown. Hiding console output wholesale would be a bad trade.
+ */
+const BENIGN = [
+  /^INFO: \[/,
+  /^WARNING: \[npu_registry/,
+  /^ERROR: Following operations are not supported by GPU delegate/,
+  /^(GATHER|RESHAPE|STRIDED_SLICE):/,
+  /operations will run on the GPU/,
+  /Created TensorFlow Lite XNNPACK delegate/,
+  /Model not fully compiled for webgpu/,
+];
+for (const level of ['error', 'warn', 'log']) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    const first = typeof args[0] === 'string' ? args[0] : '';
+    if (BENIGN.some((re) => re.test(first))) return;
+    original(...args);
+  };
+}
+
 let tesseractWorker = null;
 
 async function getWorker() {
