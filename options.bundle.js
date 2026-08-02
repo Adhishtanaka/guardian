@@ -589,8 +589,6 @@ function remainingLockout(state, now = Date.now()) {
 var DEFAULTS = {
   autoScan: true,
   blockFlagged: true,
-  theme: "system",
-  // system | light | dark
   tourDone: false
 };
 function normalizeDomain(input) {
@@ -634,15 +632,6 @@ var el = (tag, cls, text) => {
   if (text != null) n2.textContent = text;
   return n2;
 };
-var media = window.matchMedia("(prefers-color-scheme: dark)");
-function applyTheme(pref) {
-  const dark = pref === "dark" || pref === "system" && media.matches;
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
-}
-media.addEventListener("change", async () => {
-  const { theme } = await getSettings();
-  if (theme === "system") applyTheme("system");
-});
 var isFirstRun = false;
 async function initLock() {
   const record = await getPinRecord();
@@ -696,8 +685,6 @@ async function render() {
   const s2 = await getSettings();
   $2("autoScan").checked = s2.autoScan;
   $2("blockFlagged").checked = s2.blockFlagged;
-  $2("theme").value = s2.theme;
-  applyTheme(s2.theme);
   await renderAllow();
   await renderHistory();
   renderModelInfo();
@@ -813,10 +800,6 @@ $2("forgot").addEventListener("click", () => {
 });
 $2("autoScan").addEventListener("change", (e2) => setSettings({ autoScan: e2.target.checked }));
 $2("blockFlagged").addEventListener("change", (e2) => setSettings({ blockFlagged: e2.target.checked }));
-$2("theme").addEventListener("change", (e2) => {
-  setSettings({ theme: e2.target.value });
-  applyTheme(e2.target.value);
-});
 $2("allowAdd").addEventListener("click", async () => {
   const msg = $2("allowError");
   msg.textContent = "";
@@ -850,6 +833,5 @@ $2("changePin").addEventListener("click", async () => {
 $2("startTour").addEventListener("click", runTour);
 $2("lockNow").addEventListener("click", () => location.reload());
 (async () => {
-  applyTheme((await getSettings()).theme || DEFAULTS.theme);
   await initLock();
 })();
