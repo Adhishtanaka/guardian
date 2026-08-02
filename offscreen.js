@@ -24,6 +24,12 @@ async function getWorker() {
     langPath: chrome.runtime.getURL('lib/tesseract'),
     corePath: chrome.runtime.getURL('lib/tesseract'),
     gzip: true,
+    // Tesseract normally spawns its worker from a blob: URL that does
+    // importScripts(workerPath). A blob worker has an opaque origin and cannot
+    // importScripts a chrome-extension:// URL, which fails with
+    // "The script at chrome-extension://.../worker.min.js failed to load".
+    // Loading the worker straight from the extension URL avoids the blob entirely.
+    workerBlobURL: false,
   });
   return tesseractWorker;
 }
