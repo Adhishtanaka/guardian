@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Guardian — Settings</title>
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="lib/driver/driver.css" />
+  </head>
+  <body>
+    <!-- PIN gate: shown until unlocked -->
+    <div class="lock" id="lock">
+      <div class="lock-card">
+        <img src="icons/icon128.png" alt="" />
+        <h1 id="lockTitle">Enter your PIN</h1>
+        <p id="lockSub">Settings are protected so they can't be changed casually.</p>
+        <input type="password" id="pin1" inputmode="numeric" autocomplete="off"
+               maxlength="8" placeholder="••••" />
+        <input type="password" id="pin2" inputmode="numeric" autocomplete="off"
+               maxlength="8" placeholder="Confirm PIN" hidden />
+        <p class="error" id="lockError"></p>
+        <button id="lockBtn">Unlock</button>
+        <button class="linkish" id="forgot">Forgotten your PIN?</button>
+      </div>
+    </div>
+
+    <!-- Settings, revealed after unlock -->
+    <div class="wrap" id="app" hidden>
+      <div class="masthead">
+        <img src="icons/icon128.png" alt="" />
+        <h1>Guardian</h1>
+      </div>
+      <p class="tagline">On-device protection. No screenshot, URL or history ever leaves this computer.</p>
+
+      <section class="card" id="secProtection">
+        <h2>Protection</h2>
+        <p class="hint">Guardian checks each page as it loads and blocks what looks unsafe.</p>
+        <div class="row">
+          <div>
+            <div class="label">Scan pages automatically</div>
+            <div class="sub">Turn this off and nothing is checked.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="autoScan" /><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">Block flagged pages</div>
+            <div class="sub">Covers the page with a warning. Off means warn via the icon only.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="blockFlagged" /><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">Model</div>
+            <div class="sub" id="modelInfo">loading…</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="secAllow">
+        <h2>Allowed sites</h2>
+        <p class="hint">Sites listed here are never scanned or blocked. Use it for anything wrongly flagged.</p>
+        <div class="field">
+          <input type="text" id="allowInput" placeholder="example.com" autocomplete="off" />
+          <button id="allowAdd">Add</button>
+        </div>
+        <label class="checkline" style="margin-top:9px">
+          <input type="checkbox" id="allowSubs" checked /> also allow subdomains (news.example.com)
+        </label>
+        <p class="error" id="allowError"></p>
+        <ul class="list" id="allowList"></ul>
+      </section>
+
+      <section class="card" id="secActivity">
+        <h2>Activity</h2>
+        <p class="hint">Only blocked pages are recorded — ordinary browsing is never logged.</p>
+        <ul class="list" id="historyList"></ul>
+        <div style="margin-top:14px"><button class="danger" id="clearHistory">Clear history</button></div>
+      </section>
+
+      <section class="card" id="secAppearance">
+        <h2>Appearance</h2>
+        <div class="row">
+          <div>
+            <div class="label">Theme</div>
+            <div class="sub">Match your system, or pick one.</div>
+          </div>
+          <select id="theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card" id="secSecurity">
+        <h2>Security</h2>
+        <p class="hint">The PIN keeps these settings from being changed by whoever is using the computer.</p>
+        <div class="field">
+          <input type="password" id="newPin" inputmode="numeric" maxlength="8"
+                 placeholder="New PIN (4–8 digits)" autocomplete="off" />
+          <button class="ghost" id="changePin">Change PIN</button>
+        </div>
+        <p class="error" id="pinMsg"></p>
+        <div class="notice">
+          <strong>What this PIN does and does not do.</strong> It stops the settings being changed
+          casually. It cannot stop someone who knows Chrome well: any user can disable Guardian from
+          <em>chrome://extensions</em>, and that is true of every extension. For protection that
+          cannot be switched off, install Guardian through Chrome Enterprise policy
+          (<em>ExtensionInstallForcelist</em>, with <em>ExtensionSettings</em> blocking removal).
+        </div>
+      </section>
+
+      <div style="display:flex;gap:10px;margin-top:22px">
+        <button class="ghost" id="startTour">Show me around</button>
+        <button class="ghost" id="lockNow">Lock settings</button>
+      </div>
+    </div>
+
+    <script type="module" src="options.bundle.js"></script>
+  </body>
+</html>
