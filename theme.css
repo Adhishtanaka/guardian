@@ -35,7 +35,7 @@ body {
 .masthead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
 .masthead img { width: 36px; height: 36px; }
 .masthead h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
-.tagline { color: var(--muted); font-size: 13px; margin: 0 0 26px 48px; }
+.tagline { color: var(--muted); font-size: 13px; margin: 0; }
 
 /* --- cards --- */
 .card {
@@ -152,3 +152,27 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 }
 .linkish:hover { background: none; color: var(--text); }
 [hidden] { display: none !important; }
+
+/* --- tab navigation --- */
+.masthead { align-items: flex-start; }
+.masthead h1 { margin: 0; }
+.masthead .tagline { margin: 2px 0 0; }
+.masthead > button.small { margin-left: auto; padding: 6px 12px; font-size: 13px; }
+
+.tabs {
+  display: flex; gap: 4px; margin: 22px 0 16px;
+  border-bottom: 1px solid var(--border); overflow-x: auto;
+}
+.tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--muted); font-size: 14px; font-weight: 550; padding: 10px 14px;
+  white-space: nowrap; transition: color .15s, border-color .15s;
+}
+.tab:hover { background: none; color: var(--text); }
+.tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
+.tab .count {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 11px; font-weight: 700; color: var(--muted);
+}
+.panel { margin-bottom: 0; }

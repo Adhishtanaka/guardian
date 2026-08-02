@@ -36,6 +36,20 @@ export function isAllowed(host, allowList = []) {
   return allowList.some((e) => hostMatches(host, e.domain, e.includeSubdomains));
 }
 
+export function isBlocked(host, blockList = []) {
+  return blockList.some((e) => hostMatches(host, e.domain, e.includeSubdomains));
+}
+
+/**
+ * A domain on both lists is blocked. For a parental tool the safe reading of a
+ * contradiction is the restrictive one, and an explicit block is a deliberate act.
+ */
+export function decideList(host, allowList = [], blockList = []) {
+  if (isBlocked(host, blockList)) return 'blocked';
+  if (isAllowed(host, allowList)) return 'allowed';
+  return null;
+}
+
 export function normalizeDomain(input) {
   let s = String(input || '').trim().toLowerCase();
   if (!s) return null;
@@ -83,6 +97,13 @@ export async function getAllowList() {
 
 export const setAllowList = (allowList) => chrome.storage.local.set({ allowList });
 
+export async function getBlockList() {
+  const { blockList = [] } = await chrome.storage.local.get('blockList');
+  return blockList;
+}
+
+export const setBlockList = (blockList) => chrome.storage.local.set({ blockList });
+
 export async function getHistory() {
   const { history = [] } = await chrome.storage.local.get('history');
   return history;
@@ -111,3 +132,6 @@ export async function getLockState() {
 }
 
 export const setLockState = (lockState) => chrome.storage.local.set({ lockState });
+
+/** Wipes everything: PIN, lists, history, settings. Used by "reset Guardian". */
+export const clearAllData = () => chrome.storage.local.clear();

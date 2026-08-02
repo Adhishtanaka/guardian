@@ -608,6 +608,11 @@ async function getAllowList() {
   return allowList;
 }
 var setAllowList = (allowList) => chrome.storage.local.set({ allowList });
+async function getBlockList() {
+  const { blockList = [] } = await chrome.storage.local.get("blockList");
+  return blockList;
+}
+var setBlockList = (blockList) => chrome.storage.local.set({ blockList });
 async function getHistory() {
   const { history = [] } = await chrome.storage.local.get("history");
   return history;
@@ -623,6 +628,7 @@ async function getLockState() {
   return lockState;
 }
 var setLockState = (lockState) => chrome.storage.local.set({ lockState });
+var clearAllData = () => chrome.storage.local.clear();
 
 // options.js
 var $2 = (id) => document.getElementById(id);
@@ -632,6 +638,20 @@ var el = (tag, cls, text) => {
   if (text != null) n2.textContent = text;
   return n2;
 };
+var TABS = ["protection", "allowed", "blocked", "activity", "security"];
+function showTab(name) {
+  if (!TABS.includes(name)) name = TABS[0];
+  for (const t2 of TABS) {
+    document.getElementById(`panel-${t2}`).hidden = t2 !== name;
+    const btn = document.querySelector(`.tab[data-tab="${t2}"]`);
+    btn.setAttribute("aria-selected", String(t2 === name));
+  }
+  location.hash = name;
+}
+document.getElementById("tabs").addEventListener("click", (e2) => {
+  const btn = e2.target.closest(".tab");
+  if (btn) showTab(btn.dataset.tab);
+});
 var isFirstRun = false;
 async function initLock() {
   const record = await getPinRecord();
@@ -674,6 +694,7 @@ async function attemptUnlock() {
 async function unlock() {
   $2("lock").hidden = true;
   $2("app").hidden = false;
+  showTab(location.hash.replace("#", "") || "protection");
   await render();
   const { tourDone } = await getSettings();
   if (!tourDone) {
@@ -685,7 +706,8 @@ async function render() {
   const s2 = await getSettings();
   $2("autoScan").checked = s2.autoScan;
   $2("blockFlagged").checked = s2.blockFlagged;
-  await renderAllow();
+  await renderSiteList("allow");
+  await renderSiteList("block");
   await renderHistory();
   renderModelInfo();
 }
@@ -697,45 +719,71 @@ async function renderModelInfo() {
     $2("modelInfo").textContent = "model files missing from model/";
   }
 }
-async function renderAllow() {
-  const list = await getAllowList();
-  const ul = $2("allowList");
+async function renderSiteList(kind) {
+  const isAllow = kind === "allow";
+  const get = isAllow ? getAllowList : getBlockList;
+  const set = isAllow ? setAllowList : setBlockList;
+  const list = await get();
+  const ul = $2(isAllow ? "allowList" : "blockList");
   ul.replaceChildren();
+  const badge = document.querySelector(`.tab[data-tab="${isAllow ? "allowed" : "blocked"}"] .count`);
+  if (badge) badge.textContent = list.length || "";
   if (!list.length) {
-    ul.append(el("li", "empty", "No sites allowed yet."));
+    ul.append(el("li", "empty", isAllow ? "No sites allowed yet." : "No sites blocked yet."));
     return;
   }
   list.forEach((entry, i2) => {
     const li = el("li");
     const box = el("div", "grow");
     box.append(el("div", "mono", entry.domain));
-    box.append(el("div", "sub", entry.includeSubdomains ? "including subdomains" : "this domain only"));
+    box.append(el("div", "sub", entry.includeSubdomains ? `including subdomains` : "this domain only"));
     const toggle = el(
       "button",
       "ghost",
       entry.includeSubdomains ? "Subdomains: on" : "Subdomains: off"
     );
     toggle.onclick = async () => {
-      const l2 = await getAllowList();
+      const l2 = await get();
       l2[i2].includeSubdomains = !l2[i2].includeSubdomains;
-      await setAllowList(l2);
-      renderAllow();
+      await set(l2);
+      renderSiteList(kind);
     };
     const del = el("button", "danger", "Remove");
     del.onclick = async () => {
-      const l2 = await getAllowList();
+      const l2 = await get();
       l2.splice(i2, 1);
-      await setAllowList(l2);
-      renderAllow();
+      await set(l2);
+      renderSiteList(kind);
     };
     li.append(box, toggle, del);
     ul.append(li);
   });
 }
+async function addSite(kind) {
+  const isAllow = kind === "allow";
+  const msg = $2(isAllow ? "allowError" : "blockError");
+  const input = $2(isAllow ? "allowInput" : "blockInput");
+  const subs = $2(isAllow ? "allowSubs" : "blockSubs");
+  const get = isAllow ? getAllowList : getBlockList;
+  const set = isAllow ? setAllowList : setBlockList;
+  msg.textContent = "";
+  const domain = normalizeDomain(input.value);
+  if (!domain) return void (msg.textContent = "Enter a site like example.com");
+  const list = await get();
+  if (list.some((e2) => e2.domain === domain)) {
+    return void (msg.textContent = "That site is already on this list.");
+  }
+  list.push({ domain, includeSubdomains: subs.checked });
+  await set(list);
+  input.value = "";
+  renderSiteList(kind);
+}
 async function renderHistory() {
   const hist = await getHistory();
   const ul = $2("historyList");
   ul.replaceChildren();
+  const badge = document.querySelector('.tab[data-tab="activity"] .count');
+  if (badge) badge.textContent = hist.length || "";
   if (!hist.length) {
     ul.append(el("li", "empty", "Nothing has been blocked yet."));
     return;
@@ -757,7 +805,7 @@ async function renderHistory() {
       const l2 = await getAllowList();
       if (!l2.some((e2) => e2.domain === d2)) l2.push({ domain: d2, includeSubdomains: true });
       await setAllowList(l2);
-      renderAllow();
+      renderSiteList("allow");
       allow.textContent = "Allowed";
       allow.disabled = true;
     };
@@ -766,29 +814,49 @@ async function renderHistory() {
   }
 }
 function runTour() {
+  const step = (tab, element, title, description) => ({
+    element,
+    onHighlightStarted: () => showTab(tab),
+    popover: { title, description }
+  });
   oe({
     showProgress: true,
     nextBtnText: "Next",
     prevBtnText: "Back",
     doneBtnText: "Got it",
     steps: [
-      { element: "#secProtection", popover: {
-        title: "Protection",
-        description: "Guardian checks every page as it loads, on this computer. Turn scanning off here if you ever need to."
-      } },
-      { element: "#secAllow", popover: {
-        title: "Allowed sites",
-        description: "If a safe site is blocked by mistake, add it here and Guardian will skip it from then on."
-      } },
-      { element: "#secActivity", popover: {
-        title: "Activity",
-        description: "Pages that were blocked show up here. Ordinary browsing is never recorded. You can allow a site straight from this list."
-      } },
-      { element: "#secSecurity", popover: {
-        title: "Your PIN",
-        description: "Change your PIN here. Read the note underneath \u2014 it explains what the PIN can and cannot protect against."
-      } }
-    ]
+      step(
+        "protection",
+        "#panel-protection",
+        "Protection",
+        "Guardian checks every page as it loads, here on this computer. You can pause scanning or stop it covering blocked pages."
+      ),
+      step(
+        "allowed",
+        "#panel-allowed",
+        "Allowed sites",
+        "If a safe site is ever blocked by mistake, add it here and Guardian will skip it from then on."
+      ),
+      step(
+        "blocked",
+        "#panel-blocked",
+        "Blocked sites",
+        "Sites you always want blocked, whatever the model decides. If a site is on both lists, it stays blocked."
+      ),
+      step(
+        "activity",
+        "#panel-activity",
+        "Activity",
+        "Pages that were blocked appear here. Ordinary browsing is never recorded. You can allow a site straight from this list."
+      ),
+      step(
+        "security",
+        "#panel-security",
+        "PIN and reset",
+        "Your PIN protects these settings and is required to reveal a blocked page. Clearing all data returns Guardian to its first-run state."
+      )
+    ],
+    onDestroyed: () => showTab("protection")
   }).drive();
 }
 $2("lockBtn").addEventListener("click", attemptUnlock);
@@ -800,22 +868,24 @@ $2("forgot").addEventListener("click", () => {
 });
 $2("autoScan").addEventListener("change", (e2) => setSettings({ autoScan: e2.target.checked }));
 $2("blockFlagged").addEventListener("change", (e2) => setSettings({ blockFlagged: e2.target.checked }));
-$2("allowAdd").addEventListener("click", async () => {
-  const msg = $2("allowError");
-  msg.textContent = "";
-  const domain = normalizeDomain($2("allowInput").value);
-  if (!domain) return void (msg.textContent = "Enter a site like example.com");
-  const list = await getAllowList();
-  if (list.some((e2) => e2.domain === domain)) {
-    return void (msg.textContent = "That site is already allowed.");
-  }
-  list.push({ domain, includeSubdomains: $2("allowSubs").checked });
-  await setAllowList(list);
-  $2("allowInput").value = "";
-  renderAllow();
-});
+$2("allowAdd").addEventListener("click", () => addSite("allow"));
+$2("blockAdd").addEventListener("click", () => addSite("block"));
 $2("allowInput").addEventListener("keydown", (e2) => {
-  if (e2.key === "Enter") $2("allowAdd").click();
+  if (e2.key === "Enter") addSite("allow");
+});
+$2("blockInput").addEventListener("keydown", (e2) => {
+  if (e2.key === "Enter") addSite("block");
+});
+$2("clearAll").addEventListener("click", async () => {
+  const msg = $2("resetMsg");
+  msg.textContent = "";
+  const record = await getPinRecord();
+  if (!await verifyPin($2("resetPin").value, record)) {
+    return void (msg.textContent = "Incorrect PIN \u2014 nothing was erased.");
+  }
+  if (!confirm("Erase the PIN, both site lists, all history and every setting?\n\nGuardian returns to its first-run state. This cannot be undone.")) return;
+  await clearAllData();
+  location.reload();
 });
 $2("clearHistory").addEventListener("click", async () => {
   await clearHistory();
@@ -835,3 +905,6 @@ $2("lockNow").addEventListener("click", () => location.reload());
 (async () => {
   await initLock();
 })();
+export {
+  showTab
+};

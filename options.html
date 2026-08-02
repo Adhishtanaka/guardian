@@ -23,15 +23,26 @@
       </div>
     </div>
 
-    <!-- Settings, revealed after unlock -->
     <div class="wrap" id="app" hidden>
       <div class="masthead">
         <img src="icons/icon128.png" alt="" />
-        <h1>Guardian</h1>
+        <div>
+          <h1>Guardian</h1>
+          <p class="tagline">On-device protection. Nothing leaves this computer.</p>
+        </div>
+        <button class="ghost small" id="lockNow">Lock</button>
       </div>
-      <p class="tagline">On-device protection. No screenshot, URL or history ever leaves this computer.</p>
 
-      <section class="card" id="secProtection">
+      <nav class="tabs" id="tabs">
+        <button class="tab" data-tab="protection">Protection</button>
+        <button class="tab" data-tab="allowed">Allowed<span class="count"></span></button>
+        <button class="tab" data-tab="blocked">Blocked<span class="count"></span></button>
+        <button class="tab" data-tab="activity">Activity<span class="count"></span></button>
+        <button class="tab" data-tab="security">Security</button>
+      </nav>
+
+      <!-- Protection -->
+      <section class="panel card" id="panel-protection">
         <h2>Protection</h2>
         <p class="hint">Guardian checks each page as it loads and blocks what looks unsafe.</p>
         <div class="row">
@@ -56,48 +67,73 @@
         </div>
       </section>
 
-      <section class="card" id="secAllow">
+      <!-- Allowed -->
+      <section class="panel card" id="panel-allowed" hidden>
         <h2>Allowed sites</h2>
-        <p class="hint">Sites listed here are never scanned or blocked. Use it for anything wrongly flagged.</p>
+        <p class="hint">Never scanned or blocked. Use it for anything wrongly flagged.</p>
         <div class="field">
           <input type="text" id="allowInput" placeholder="example.com" autocomplete="off" />
           <button id="allowAdd">Add</button>
         </div>
-        <label class="checkline" style="margin-top:9px">
-          <input type="checkbox" id="allowSubs" checked /> also allow subdomains (news.example.com)
-        </label>
+        <label class="checkline"><input type="checkbox" id="allowSubs" checked /> also allow subdomains</label>
         <p class="error" id="allowError"></p>
         <ul class="list" id="allowList"></ul>
       </section>
 
-      <section class="card" id="secActivity">
+      <!-- Blocked -->
+      <section class="panel card" id="panel-blocked" hidden>
+        <h2>Blocked sites</h2>
+        <p class="hint">Always blocked, whatever the model thinks. A site on both lists is blocked.</p>
+        <div class="field">
+          <input type="text" id="blockInput" placeholder="example.com" autocomplete="off" />
+          <button id="blockAdd">Add</button>
+        </div>
+        <label class="checkline"><input type="checkbox" id="blockSubs" checked /> also block subdomains</label>
+        <p class="error" id="blockError"></p>
+        <ul class="list" id="blockList"></ul>
+      </section>
+
+      <!-- Activity -->
+      <section class="panel card" id="panel-activity" hidden>
         <h2>Activity</h2>
         <p class="hint">Only blocked pages are recorded — ordinary browsing is never logged.</p>
         <ul class="list" id="historyList"></ul>
         <div style="margin-top:14px"><button class="danger" id="clearHistory">Clear history</button></div>
       </section>
 
-      <section class="card" id="secSecurity">
+      <!-- Security -->
+      <section class="panel card" id="panel-security" hidden>
         <h2>Security</h2>
-        <p class="hint">The PIN keeps these settings from being changed by whoever is using the computer.</p>
+        <p class="hint">The PIN protects these settings, and unlocking a blocked page.</p>
         <div class="field">
           <input type="password" id="newPin" inputmode="numeric" maxlength="8"
                  placeholder="New PIN (4–8 digits)" autocomplete="off" />
           <button class="ghost" id="changePin">Change PIN</button>
         </div>
         <p class="error" id="pinMsg"></p>
+
         <div class="notice">
           <strong>What this PIN does and does not do.</strong> It stops the settings being changed
-          casually. It cannot stop someone who knows Chrome well: any user can disable Guardian from
-          <em>chrome://extensions</em>, and that is true of every extension. For protection that
-          cannot be switched off, install Guardian through Chrome Enterprise policy
-          (<em>ExtensionInstallForcelist</em>, with <em>ExtensionSettings</em> blocking removal).
+          casually, and it is required to reveal a blocked page. It cannot stop someone who knows
+          Chrome well: any user can disable Guardian from <em>chrome://extensions</em>, and that is
+          true of every extension. For protection that cannot be switched off, install Guardian
+          through Chrome Enterprise policy (<em>ExtensionInstallForcelist</em>, with
+          <em>ExtensionSettings</em> blocking removal).
         </div>
+
+        <h2 style="margin-top:26px">Reset Guardian</h2>
+        <p class="hint">Erases the PIN, both site lists, the activity history and every setting.
+          Guardian returns to its first-run state. This cannot be undone.</p>
+        <div class="field">
+          <input type="password" id="resetPin" inputmode="numeric" maxlength="8"
+                 placeholder="Confirm with your PIN" autocomplete="off" />
+          <button class="danger" id="clearAll">Clear all data</button>
+        </div>
+        <p class="error" id="resetMsg"></p>
       </section>
 
-      <div style="display:flex;gap:10px;margin-top:22px">
+      <div style="margin-top:22px">
         <button class="ghost" id="startTour">Show me around</button>
-        <button class="ghost" id="lockNow">Lock settings</button>
       </div>
     </div>
 

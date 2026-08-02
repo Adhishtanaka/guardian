@@ -7,10 +7,16 @@
  * every time.
  */
 
-import { getSettings, getAllowList, isAllowed, recordFlagged } from './store.js';
+import {
+  getSettings, getAllowList, getBlockList, decideList, recordFlagged,
+  setAllowList, normalizeDomain, getPinRecord, getLockState, setLockState,
+} from './store.js';
+import { verifyPin, remainingLockout } from './auth.js';
 
 const OFFSCREEN = 'offscreen.html';
 const RECENT = new Map();          // tabId -> { url, verdict }
+const BYPASS = new Set();          // "tabId|url" the parent unlocked with the PIN
+const bypassKey = (tabId, url) => `${tabId}|${url}`;
 const COOLDOWN_MS = 4000;
 let lastScanAt = 0;
 let scanning = false;
@@ -73,33 +79,107 @@ async function setBadge(tabId, kind) {
   } catch { /* tab closed */ }
 }
 
-/** Injected into the page itself — must be self-contained. */
-function showWarning(label, probs) {
-  if (document.getElementById('__pc_warn')) return;
-  const pct = Math.round((probs[label] || 0) * 100);
-  const wrap = document.createElement('div');
-  wrap.id = '__pc_warn';
-  Object.assign(wrap.style, {
+/**
+ * Injected into the blocked page. Must be entirely self-contained — it runs in the
+ * page's isolated world, so it can only reach the extension through messaging.
+ *
+ * "Show anyway" is the bypass, so it asks for the PIN. The PIN is never checked here:
+ * it is sent to the service worker, which owns the hash. Nothing secret is exposed
+ * to a page that might be hostile.
+ */
+function showWarning(label, probs, host) {
+  if (document.getElementById('__g_warn')) return;
+  const pct = Math.round((probs?.[label] || 0) * 100);
+  const S = (n, css) => Object.assign(n.style, css);
+  const mk = (tag, css, text) => {
+    const n = document.createElement(tag);
+    if (css) S(n, css);
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  const wrap = mk('div', {
     position: 'fixed', inset: '0', zIndex: '2147483647',
-    background: 'rgba(10,12,16,.97)', color: '#fff', display: 'flex',
-    flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-    font: '16px/1.5 -apple-system,system-ui,sans-serif', textAlign: 'center',
+    background: '#0d1512f2', backdropFilter: 'blur(6px)', color: '#fff',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    font: '15px/1.55 -apple-system,system-ui,sans-serif',
   });
-  const h = document.createElement('div');
-  h.textContent = label === 'nsfw' ? 'Adult content blocked' : 'Suspicious page blocked';
-  Object.assign(h.style, { fontSize: '26px', fontWeight: '700', marginBottom: '10px' });
-  const p = document.createElement('div');
-  p.textContent = `Classified as ${label} (${pct}% confidence) by the on-device model.`;
-  Object.assign(p.style, { color: '#aeb6c2', marginBottom: '22px' });
-  const btn = document.createElement('button');
-  btn.textContent = 'Show anyway';
-  Object.assign(btn.style, {
-    padding: '10px 20px', borderRadius: '8px', border: '1px solid #454c59',
-    background: '#252a33', color: '#e6e8eb', cursor: 'pointer', fontSize: '14px',
+  wrap.id = '__g_warn';
+
+  const card = mk('div', {
+    background: '#ffffff', color: '#13211a', borderRadius: '16px', padding: '30px 32px',
+    width: 'min(420px,92vw)', textAlign: 'center', boxShadow: '0 20px 60px #0006',
   });
-  btn.onclick = () => wrap.remove();
-  wrap.append(h, p, btn);
+
+  const bad = label === 'nsfw' ? '#dc2626' : '#ea580c';
+  const dot = mk('div', {
+    width: '54px', height: '54px', borderRadius: '50%', margin: '0 auto 16px',
+    background: label === 'nsfw' ? '#fdeaea' : '#fdf0e6', color: bad,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: '26px', fontWeight: '700',
+  }, label === 'nsfw' ? '\u2715' : '!');
+
+  const title = mk('div', { fontSize: '20px', fontWeight: '700', marginBottom: '6px' },
+    label === 'nsfw' ? 'Adult content blocked' : 'Suspicious page blocked');
+  const sub = mk('div', { color: '#5e6f66', fontSize: '13.5px', marginBottom: '22px' },
+    `${host || 'This page'} — ${pct}% confidence, checked on this device.`);
+
+  const btn = (text, primary) => mk('button', {
+    font: 'inherit', fontSize: '14px', fontWeight: '600', cursor: 'pointer', width: '100%',
+    padding: '11px', borderRadius: '9px', marginTop: '8px',
+    border: primary ? '1px solid #16a34a' : '1px solid #e1e8e4',
+    background: primary ? '#16a34a' : '#fff', color: primary ? '#fff' : '#13211a',
+  }, text);
+
+  const back = btn('Go back', true);
+  back.onclick = () => history.length > 1 ? history.back() : window.close();
+  const showBtn = btn('Show anyway (needs PIN)');
+
+  const step2 = mk('div', { display: 'none', marginTop: '10px' });
+  const pin = mk('input');
+  Object.assign(pin, { type: 'password', inputMode: 'numeric', maxLength: 8, placeholder: 'PIN' });
+  S(pin, {
+    width: '100%', padding: '11px', fontSize: '18px', textAlign: 'center', letterSpacing: '6px',
+    border: '1px solid #e1e8e4', borderRadius: '9px', background: '#f8faf9', color: '#13211a',
+  });
+  const err = mk('div', { color: '#dc2626', fontSize: '12.5px', minHeight: '18px', marginTop: '6px' });
+  const unlockBtn = btn('Unlock', true);
+  step2.append(pin, err, unlockBtn);
+
+  const step3 = mk('div', { display: 'none', marginTop: '10px' });
+  step3.append(mk('div', { color: '#5e6f66', fontSize: '13px', marginBottom: '4px' },
+    'PIN accepted. How long should this be allowed?'));
+  const onceBtn = btn('Just this once');
+  const alwaysBtn = btn('Always allow ' + (host || 'this site'), true);
+  step3.append(onceBtn, alwaysBtn);
+
+  card.append(dot, title, sub, back, showBtn, step2, step3);
+  wrap.append(card);
   document.documentElement.appendChild(wrap);
+
+  showBtn.onclick = () => { showBtn.style.display = 'none'; step2.style.display = 'block'; pin.focus(); };
+
+  const tryPin = async () => {
+    err.textContent = '';
+    const res = await chrome.runtime.sendMessage({ type: 'verifyPin', pin: pin.value })
+      .catch(() => ({ ok: false, error: 'Guardian is not responding.' }));
+    if (res?.ok) { step2.style.display = 'none'; step3.style.display = 'block'; return; }
+    pin.value = '';
+    err.textContent = res?.waitMs
+      ? `Too many attempts. Wait ${Math.ceil(res.waitMs / 1000)}s.`
+      : (res?.error || 'Incorrect PIN.');
+  };
+  unlockBtn.onclick = tryPin;
+  pin.onkeydown = (e) => { if (e.key === 'Enter') tryPin(); };
+
+  onceBtn.onclick = async () => {
+    await chrome.runtime.sendMessage({ type: 'bypassOnce', url: location.href }).catch(() => {});
+    wrap.remove();
+  };
+  alwaysBtn.onclick = async () => {
+    await chrome.runtime.sendMessage({ type: 'allowAlways', host }).catch(() => {});
+    wrap.remove();
+  };
 }
 
 async function scanTab(tabId, url, force = false) {
@@ -112,13 +192,31 @@ async function scanTab(tabId, url, force = false) {
   const { autoScan } = await getSettings();
   if (!autoScan) return;
 
-  // Allowed sites are skipped entirely: not captured, not scanned, not recorded.
   let host = '';
   try { host = new URL(url).hostname; } catch { /* not a normal page */ }
-  if (host && isAllowed(host, await getAllowList())) {
-    RECENT.set(tabId, { url, verdict: { label: 'allowed' } });
-    await setBadge(tabId, 'allowed');
-    return;
+
+  // A parent's explicit decision outranks the model, so the lists are checked first
+  // and the page is never captured or classified at all.
+  if (host) {
+    const listed = decideList(host, await getAllowList(), await getBlockList());
+    if (listed === 'allowed') {
+      RECENT.set(tabId, { url, verdict: { label: 'allowed' } });
+      await setBadge(tabId, 'allowed');
+      return;
+    }
+    if (listed === 'blocked') {
+      const verdict = { label: 'malicious', probs: { malicious: 1, normal: 0, nsfw: 0 },
+                        blockedByList: true };
+      RECENT.set(tabId, { url, verdict });
+      await setBadge(tabId, 'malicious');
+      await recordFlagged(url, verdict);
+      if (!BYPASS.has(bypassKey(tabId, url))) {
+        chrome.scripting.executeScript({
+          target: { tabId }, func: showWarning, args: ['malicious', verdict.probs, host],
+        }).catch(() => {});
+      }
+      return;
+    }
   }
 
   scanning = true;
@@ -145,11 +243,12 @@ async function scanTab(tabId, url, force = false) {
     if (res.label !== 'normal') await recordFlagged(url, res);   // history: flagged only
 
     const { blockFlagged } = await getSettings();
-    if (blockFlagged && res.label !== 'normal') {
+    // a one-time "show anyway" survives until the tab navigates elsewhere
+    if (blockFlagged && res.label !== 'normal' && !BYPASS.has(bypassKey(tabId, url))) {
       chrome.scripting.executeScript({
         target: { tabId },
         func: showWarning,
-        args: [res.label, res.probs],
+        args: [res.label, res.probs, host],
       }).catch(() => { /* restricted page */ });
     }
   } catch (e) {
@@ -166,7 +265,12 @@ async function scanTab(tabId, url, force = false) {
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   // A page starting to load invalidates whatever we decided about this tab,
   // which is what makes reloads and normal navigation re-scan.
-  if (info.status === 'loading') { RECENT.delete(tabId); return; }
+  if (info.status === 'loading') {
+    RECENT.delete(tabId);
+    // a one-time unlock applies to one page only
+    for (const k of BYPASS) if (k.startsWith(`${tabId}|`)) BYPASS.delete(k);
+    return;
+  }
   if (info.status !== 'complete') return;
   if (!tab.url || !/^https?:/.test(tab.url)) return;
   // let late-rendering popups and modals appear before capturing
@@ -191,20 +295,66 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   } catch { /* tab gone */ }
 });
 
-// The content script reports big DOM changes, ajax content and route changes.
-chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg?.type !== 'pageChanged' || !sender.tab) return false;
-  const { id, url } = sender.tab;
-  if (url && /^https?:/.test(url)) scanTab(id, url, true);
+chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  // The content script reports big DOM changes, ajax content and route changes.
+  if (msg?.type === 'pageChanged' && sender.tab) {
+    const { id, url } = sender.tab;
+    if (url && /^https?:/.test(url)) scanTab(id, url, true);
+    return false;
+  }
+
+  // The blocked-page overlay asks us to check the PIN. Verification happens here
+  // because the service worker owns the hash — the page never sees it.
+  if (msg?.type === 'verifyPin') {
+    (async () => {
+      const lock = await getLockState();
+      const waitMs = remainingLockout(lock);
+      if (waitMs > 0) return respond({ ok: false, waitMs });
+      const record = await getPinRecord();
+      if (!record) return respond({ ok: false, error: 'No PIN set yet. Open Guardian settings.' });
+      if (await verifyPin(msg.pin, record)) {
+        await setLockState({ failedAttempts: 0, lastFailedAt: 0 });
+        return respond({ ok: true });
+      }
+      const failedAttempts = (lock.failedAttempts || 0) + 1;
+      await setLockState({ failedAttempts, lastFailedAt: Date.now() });
+      respond({ ok: false, waitMs: remainingLockout({ failedAttempts, lastFailedAt: Date.now() }) });
+    })();
+    return true;                    // async reply
+  }
+
+  if (msg?.type === 'bypassOnce' && sender.tab) {
+    BYPASS.add(bypassKey(sender.tab.id, msg.url));
+    respond({ ok: true });
+    return true;
+  }
+
+  if (msg?.type === 'allowAlways') {
+    (async () => {
+      const domain = normalizeDomain(msg.host);
+      if (!domain) return respond({ ok: false });
+      const list = await getAllowList();
+      if (!list.some((e) => e.domain === domain)) {
+        list.push({ domain, includeSubdomains: true });
+        await setAllowList(list);
+      }
+      RECENT.clear();
+      respond({ ok: true });
+    })();
+    return true;
+  }
   return false;
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => RECENT.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  RECENT.delete(tabId);
+  for (const k of BYPASS) if (k.startsWith(`${tabId}|`)) BYPASS.delete(k);
+});
 
 // The toolbar icon opens the settings page; there is no popup any more.
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
 // Adding or removing an allowed site should take effect without a browser restart.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.allowList) RECENT.clear();
+  if (area === 'local' && (changes.allowList || changes.blockList)) RECENT.clear();
 });

@@ -7,9 +7,9 @@ import {
   createPinRecord, verifyPin, validatePinFormat, remainingLockout,
 } from './auth.js';
 import {
-  getSettings, setSettings, getAllowList, setAllowList,
+  getSettings, setSettings, getAllowList, setAllowList, getBlockList, setBlockList,
   getHistory, clearHistory, getPinRecord, setPinRecord,
-  getLockState, setLockState, normalizeDomain,
+  getLockState, setLockState, normalizeDomain, clearAllData,
 } from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +21,24 @@ const el = (tag, cls, text) => {
   if (text != null) n.textContent = text;
   return n;
 };
+
+// --- tabs -----------------------------------------------------------------
+const TABS = ['protection', 'allowed', 'blocked', 'activity', 'security'];
+
+export function showTab(name) {
+  if (!TABS.includes(name)) name = TABS[0];
+  for (const t of TABS) {
+    document.getElementById(`panel-${t}`).hidden = t !== name;
+    const btn = document.querySelector(`.tab[data-tab="${t}"]`);
+    btn.setAttribute('aria-selected', String(t === name));
+  }
+  location.hash = name;          // survives a reload, and lets the tour deep-link
+}
+
+document.getElementById('tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (btn) showTab(btn.dataset.tab);
+});
 
 // --- PIN gate -------------------------------------------------------------
 let isFirstRun = false;
@@ -76,6 +94,7 @@ async function attemptUnlock() {
 async function unlock() {
   $('lock').hidden = true;
   $('app').hidden = false;
+  showTab(location.hash.replace('#', '') || 'protection');
   await render();
   const { tourDone } = await getSettings();
   if (!tourDone) { await setSettings({ tourDone: true }); setTimeout(runTour, 400); }
@@ -86,7 +105,8 @@ async function render() {
   const s = await getSettings();
   $('autoScan').checked = s.autoScan;
   $('blockFlagged').checked = s.blockFlagged;
-  await renderAllow();
+  await renderSiteList('allow');
+  await renderSiteList('block');
   await renderHistory();
   renderModelInfo();
 }
@@ -101,12 +121,19 @@ async function renderModelInfo() {
   }
 }
 
-async function renderAllow() {
-  const list = await getAllowList();
-  const ul = $('allowList');
+async function renderSiteList(kind) {
+  const isAllow = kind === 'allow';
+  const get = isAllow ? getAllowList : getBlockList;
+  const set = isAllow ? setAllowList : setBlockList;
+  const list = await get();
+  const ul = $(isAllow ? 'allowList' : 'blockList');
   ul.replaceChildren();
+
+  const badge = document.querySelector(`.tab[data-tab="${isAllow ? 'allowed' : 'blocked'}"] .count`);
+  if (badge) badge.textContent = list.length || '';
+
   if (!list.length) {
-    ul.append(el('li', 'empty', 'No sites allowed yet.'));
+    ul.append(el('li', 'empty', isAllow ? 'No sites allowed yet.' : 'No sites blocked yet.'));
     return;
   }
   list.forEach((entry, i) => {
@@ -114,31 +141,54 @@ async function renderAllow() {
     const box = el('div', 'grow');
     box.append(el('div', 'mono', entry.domain));
     box.append(el('div', 'sub', entry.includeSubdomains
-      ? 'including subdomains' : 'this domain only'));
+      ? `including subdomains` : 'this domain only'));
     const toggle = el('button', 'ghost',
       entry.includeSubdomains ? 'Subdomains: on' : 'Subdomains: off');
     toggle.onclick = async () => {
-      const l = await getAllowList();
+      const l = await get();
       l[i].includeSubdomains = !l[i].includeSubdomains;
-      await setAllowList(l);
-      renderAllow();
+      await set(l);
+      renderSiteList(kind);
     };
     const del = el('button', 'danger', 'Remove');
     del.onclick = async () => {
-      const l = await getAllowList();
+      const l = await get();
       l.splice(i, 1);
-      await setAllowList(l);
-      renderAllow();
+      await set(l);
+      renderSiteList(kind);
     };
     li.append(box, toggle, del);
     ul.append(li);
   });
 }
 
+async function addSite(kind) {
+  const isAllow = kind === 'allow';
+  const msg = $(isAllow ? 'allowError' : 'blockError');
+  const input = $(isAllow ? 'allowInput' : 'blockInput');
+  const subs = $(isAllow ? 'allowSubs' : 'blockSubs');
+  const get = isAllow ? getAllowList : getBlockList;
+  const set = isAllow ? setAllowList : setBlockList;
+
+  msg.textContent = '';
+  const domain = normalizeDomain(input.value);
+  if (!domain) return void (msg.textContent = 'Enter a site like example.com');
+  const list = await get();
+  if (list.some((e) => e.domain === domain)) {
+    return void (msg.textContent = 'That site is already on this list.');
+  }
+  list.push({ domain, includeSubdomains: subs.checked });
+  await set(list);
+  input.value = '';
+  renderSiteList(kind);
+}
+
 async function renderHistory() {
   const hist = await getHistory();
   const ul = $('historyList');
   ul.replaceChildren();
+  const badge = document.querySelector('.tab[data-tab="activity"] .count');
+  if (badge) badge.textContent = hist.length || '';
   if (!hist.length) {
     ul.append(el('li', 'empty', 'Nothing has been blocked yet.'));
     return;
@@ -157,7 +207,7 @@ async function renderHistory() {
       const l = await getAllowList();
       if (!l.some((e) => e.domain === d)) l.push({ domain: d, includeSubdomains: true });
       await setAllowList(l);
-      renderAllow();
+      renderSiteList('allow');
       allow.textContent = 'Allowed';
       allow.disabled = true;
     };
@@ -168,29 +218,36 @@ async function renderHistory() {
 
 // --- guided tour ----------------------------------------------------------
 function runTour() {
+  // Each step switches to its tab first, otherwise driver.js would try to highlight
+  // a panel that is still hidden.
+  const step = (tab, element, title, description) => ({
+    element,
+    onHighlightStarted: () => showTab(tab),
+    popover: { title, description },
+  });
   driver({
     showProgress: true,
     nextBtnText: 'Next',
     prevBtnText: 'Back',
     doneBtnText: 'Got it',
     steps: [
-      { element: '#secProtection', popover: {
-        title: 'Protection',
-        description: 'Guardian checks every page as it loads, on this computer. ' +
-                     'Turn scanning off here if you ever need to.' } },
-      { element: '#secAllow', popover: {
-        title: 'Allowed sites',
-        description: 'If a safe site is blocked by mistake, add it here and Guardian ' +
-                     'will skip it from then on.' } },
-      { element: '#secActivity', popover: {
-        title: 'Activity',
-        description: 'Pages that were blocked show up here. Ordinary browsing is never ' +
-                     'recorded. You can allow a site straight from this list.' } },
-      { element: '#secSecurity', popover: {
-        title: 'Your PIN',
-        description: 'Change your PIN here. Read the note underneath — it explains what ' +
-                     'the PIN can and cannot protect against.' } },
+      step('protection', '#panel-protection', 'Protection',
+           'Guardian checks every page as it loads, here on this computer. '
+           + 'You can pause scanning or stop it covering blocked pages.'),
+      step('allowed', '#panel-allowed', 'Allowed sites',
+           'If a safe site is ever blocked by mistake, add it here and Guardian '
+           + 'will skip it from then on.'),
+      step('blocked', '#panel-blocked', 'Blocked sites',
+           'Sites you always want blocked, whatever the model decides. '
+           + 'If a site is on both lists, it stays blocked.'),
+      step('activity', '#panel-activity', 'Activity',
+           'Pages that were blocked appear here. Ordinary browsing is never recorded. '
+           + 'You can allow a site straight from this list.'),
+      step('security', '#panel-security', 'PIN and reset',
+           'Your PIN protects these settings and is required to reveal a blocked page. '
+           + 'Clearing all data returns Guardian to its first-run state.'),
     ],
+    onDestroyed: () => showTab('protection'),
   }).drive();
 }
 
@@ -208,21 +265,24 @@ $('forgot').addEventListener('click', () => {
 $('autoScan').addEventListener('change', (e) => setSettings({ autoScan: e.target.checked }));
 $('blockFlagged').addEventListener('change', (e) => setSettings({ blockFlagged: e.target.checked }));
 
-$('allowAdd').addEventListener('click', async () => {
-  const msg = $('allowError');
+$('allowAdd').addEventListener('click', () => addSite('allow'));
+$('blockAdd').addEventListener('click', () => addSite('block'));
+$('allowInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addSite('allow'); });
+$('blockInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addSite('block'); });
+
+// --- reset -----------------------------------------------------------------
+$('clearAll').addEventListener('click', async () => {
+  const msg = $('resetMsg');
   msg.textContent = '';
-  const domain = normalizeDomain($('allowInput').value);
-  if (!domain) return void (msg.textContent = 'Enter a site like example.com');
-  const list = await getAllowList();
-  if (list.some((e) => e.domain === domain)) {
-    return void (msg.textContent = 'That site is already allowed.');
+  const record = await getPinRecord();
+  if (!await verifyPin($('resetPin').value, record)) {
+    return void (msg.textContent = 'Incorrect PIN — nothing was erased.');
   }
-  list.push({ domain, includeSubdomains: $('allowSubs').checked });
-  await setAllowList(list);
-  $('allowInput').value = '';
-  renderAllow();
+  if (!confirm('Erase the PIN, both site lists, all history and every setting?\n\n'
+             + 'Guardian returns to its first-run state. This cannot be undone.')) return;
+  await clearAllData();
+  location.reload();
 });
-$('allowInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('allowAdd').click(); });
 
 $('clearHistory').addEventListener('click', async () => {
   await clearHistory();
