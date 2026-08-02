@@ -32,6 +32,31 @@ async function ensureOffscreen() {
   });
 }
 
+// --- toolbar icon animation ------------------------------------------------
+// Chrome has no animated-icon API, so we swap frames on a timer while a scan runs.
+const SCAN_FRAMES = 10;
+const IDLE_ICON = {
+  16: 'icons/icon16.png', 32: 'icons/icon32.png',
+  48: 'icons/icon48.png', 128: 'icons/icon128.png',
+};
+let animTimer = null;
+
+function startScanAnimation(tabId) {
+  stopScanAnimation();
+  let f = 0;
+  chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+  animTimer = setInterval(() => {
+    chrome.action.setIcon({ tabId, path: `icons/scan/f${f % SCAN_FRAMES}.png` })
+      .catch(() => {});
+    f++;
+  }, 90);
+}
+
+function stopScanAnimation(tabId) {
+  if (animTimer) { clearInterval(animTimer); animTimer = null; }
+  if (tabId != null) chrome.action.setIcon({ tabId, path: IDLE_ICON }).catch(() => {});
+}
+
 async function setBadge(tabId, kind) {
   const b = BADGE[kind] || BADGE.error;
   try {
@@ -69,10 +94,12 @@ function showWarning(label, probs) {
   document.documentElement.appendChild(wrap);
 }
 
-async function scanTab(tabId, url) {
+async function scanTab(tabId, url, force = false) {
   const now = Date.now();
   if (scanning || now - lastScanAt < COOLDOWN_MS) return;
-  if (RECENT.get(tabId)?.url === url) return;      // already judged this page
+  // A reload, an SPA route change or a big DOM swap all count as a new page,
+  // so they pass force and bypass the "already judged this URL" cache.
+  if (!force && RECENT.get(tabId)?.url === url) return;
 
   const { autoScan } = await getSettings();
   if (!autoScan) return;
@@ -88,6 +115,7 @@ async function scanTab(tabId, url) {
 
   scanning = true;
   lastScanAt = now;
+  startScanAnimation(tabId);
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab.active) return;                       // captureVisibleTab needs the active tab
@@ -119,15 +147,45 @@ async function scanTab(tabId, url) {
     console.warn('scan failed:', e);
     await setBadge(tabId, 'error');
   } finally {
+    stopScanAnimation(tabId);
     scanning = false;
   }
 }
 
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  // A page starting to load invalidates whatever we decided about this tab,
+  // which is what makes reloads and normal navigation re-scan.
+  if (info.status === 'loading') { RECENT.delete(tabId); return; }
   if (info.status !== 'complete') return;
   if (!tab.url || !/^https?:/.test(tab.url)) return;
   // let late-rendering popups and modals appear before capturing
-  setTimeout(() => scanTab(tabId, tab.url), 1800);
+  setTimeout(() => scanTab(tabId, tab.url, true), 1800);
+});
+
+// SPA navigations never reload the document, so onUpdated alone would miss them.
+if (chrome.webNavigation) {
+  chrome.webNavigation.onHistoryStateUpdated.addListener(({ tabId, url, frameId }) => {
+    if (frameId !== 0 || !/^https?:/.test(url)) return;
+    setTimeout(() => scanTab(tabId, url, true), 1200);
+  });
+}
+
+// Switching to a tab should show its verdict, re-checking if we have none.
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  const known = RECENT.get(tabId);
+  if (known) return void setBadge(tabId, known.verdict.label);
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.url && /^https?:/.test(tab.url)) scanTab(tabId, tab.url, true);
+  } catch { /* tab gone */ }
+});
+
+// The content script reports big DOM changes, ajax content and route changes.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== 'pageChanged' || !sender.tab) return false;
+  const { id, url } = sender.tab;
+  if (url && /^https?:/.test(url)) scanTab(id, url, true);
+  return false;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => RECENT.delete(tabId));

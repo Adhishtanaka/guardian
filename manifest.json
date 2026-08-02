@@ -7,7 +7,8 @@
     "tabs",
     "offscreen",
     "storage",
-    "scripting"
+    "scripting",
+    "webNavigation"
   ],
   "action": {
     "default_icon": {
@@ -25,7 +26,8 @@
     {
       "resources": [
         "lib/*",
-        "model/*"
+        "model/*",
+        "icons/*"
       ],
       "matches": [
         "<all_urls>"
@@ -48,5 +50,18 @@
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "observer.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
 }
