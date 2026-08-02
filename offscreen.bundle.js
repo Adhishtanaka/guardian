@@ -1691,7 +1691,11 @@ async function classify(bitmap, ocrText, opts = {}) {
 var tesseractWorker = null;
 async function getWorker() {
   if (tesseractWorker) return tesseractWorker;
-  const { createWorker } = await import(chrome.runtime.getURL("lib/tesseract/tesseract.esm.min.js"));
+  const mod = await import(chrome.runtime.getURL("lib/tesseract/tesseract.esm.min.js"));
+  const createWorker = mod.createWorker || mod.default?.createWorker;
+  if (typeof createWorker !== "function") {
+    throw new Error("Tesseract createWorker not found on the module");
+  }
   tesseractWorker = await createWorker("eng", 1, {
     workerPath: chrome.runtime.getURL("lib/tesseract/worker.min.js"),
     langPath: chrome.runtime.getURL("lib/tesseract"),
