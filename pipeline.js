@@ -24,7 +24,18 @@ export async function init(onStatus = () => {}) {
   vocabIndex = buildVocabIndex(cfg.vocab);
 
   onStatus('starting LiteRT…');
-  await loadLiteRt(WASM_PATH);
+  // Load the JSPI build. Of the four glue variants LiteRT ships, only
+  // litert_wasm_jspi_internal.js actually *defines* Asyncify — the plain and compat
+  // builds reference it without declaring it, so the moment a model only partially
+  // compiles for WebGPU and LiteRT takes its "fall back to WASM execution" path, the
+  // scan dies with "Asyncify is not defined".
+  try {
+    await loadLiteRt(WASM_PATH, { jspi: true });
+  } catch (e) {
+    // loadLiteRt clears its global promise on failure, so retrying here is safe.
+    console.warn('JSPI unavailable, using the default wasm build:', e);
+    await loadLiteRt(WASM_PATH);
+  }
 
   onStatus('compiling model…');
   // WebGPU when the browser offers it, otherwise CPU/wasm.

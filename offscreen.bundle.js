@@ -1593,7 +1593,12 @@ async function init(onStatus = () => {
   cfg = await (await fetch(VOCAB_PATH)).json();
   vocabIndex = buildVocabIndex(cfg.vocab);
   onStatus("starting LiteRT\u2026");
-  await loadLiteRt(WASM_PATH);
+  try {
+    await loadLiteRt(WASM_PATH, { jspi: true });
+  } catch (e) {
+    console.warn("JSPI unavailable, using the default wasm build:", e);
+    await loadLiteRt(WASM_PATH);
+  }
   onStatus("compiling model\u2026");
   try {
     model = await loadAndCompile(MODEL_PATH, { accelerator: "webgpu" });
