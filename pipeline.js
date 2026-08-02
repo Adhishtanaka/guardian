@@ -101,20 +101,31 @@ export async function buildViews(bitmap) {
 
 export const ruleHits = (text) => ruleHitsText(text, cfg.rule_phrases, cfg.class_names);
 
-/** Threshold rule from the notebook: a risky class wins if it clears its own bar. */
-function decide(probs) {
+/** A risky class wins if it clears its own bar, rather than having to win argmax. */
+function decide(probs, opts = {}) {
   const names = cfg.class_names;
   const iN = names.indexOf('nsfw');
   const iM = names.indexOf('malicious');
   const th = cfg.thresholds || {};
+  const tN = opts.nsfwThreshold != null ? opts.nsfwThreshold : th.nsfw;
+  const tM = opts.maliciousThreshold != null ? opts.maliciousThreshold : th.malicious;
   let best = probs.indexOf(Math.max(...probs));
-  if (th.malicious != null && probs[iM] >= th.malicious) best = iM;
-  if (th.nsfw != null && probs[iN] >= th.nsfw) best = iN; // nsfw last: safest wins ties
+  if (tM != null && probs[iM] >= tM) best = iM;
+  if (tN != null && probs[iN] >= tN) best = iN;   // nsfw last: the safest class wins ties
   return best;
 }
 
-/** Full pipeline. `bitmap` is the page screenshot, `ocrText` from Tesseract. */
-export async function classify(bitmap, ocrText) {
+/**
+ * Full pipeline. `bitmap` is the page screenshot, `ocrText` from Tesseract.
+ *
+ * `opts` lets the caller override the decision rule baked into vocab.json. The
+ * tuned values maximise macro-F1 on the evaluation set, where a keyword rule adds
+ * nothing because the model has already seen the vocabulary. In the browser the
+ * rules matter: they are the only thing that still fires when the visual branch is
+ * confident and wrong, which is exactly the reported failure on a search results
+ * page whose text plainly says what it is.
+ */
+export async function classify(bitmap, ocrText, opts = {}) {
   const views = await buildViews(bitmap);
   const tokens = tokenize(ocrText);
 
@@ -126,7 +137,7 @@ export async function classify(bitmap, ocrText) {
   const logits = Array.from(await outputs[key].data()); // model emits FUSED LOGITS
 
   // rules are added in logit space, exactly as the notebook's search did
-  const boost = cfg.rule_boost || 0;
+  const boost = opts.ruleBoost != null ? opts.ruleBoost : (cfg.rule_boost || 0);
   const rules = ruleHits(ocrText);
   const fused = logits.map((v, i) => v + boost * rules[i]);
   const probs = softmax(fused);
@@ -135,10 +146,15 @@ export async function classify(bitmap, ocrText) {
   textT.delete();
   Object.values(outputs).forEach((t) => t.delete());
 
-  const idx = decide(probs);
+  const idx = decide(probs, opts);
+  const label = cfg.class_names[idx];
+  const top = Math.max(...probs);
   return {
-    label: cfg.class_names[idx],
+    label,
     probs: Object.fromEntries(cfg.class_names.map((c, i) => [c, probs[i]])),
     ocrChars: (ocrText || '').length,
+    ruleFired: rules.some((v) => v > 0),
+    // Low confidence, or a flagged page, is what triggers a confirmation scan.
+    uncertain: top < 0.65,
   };
 }

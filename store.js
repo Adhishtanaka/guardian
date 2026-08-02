@@ -9,6 +9,19 @@ export const DEFAULTS = {
   autoScan: true,
   blockFlagged: true,
   tourDone: false,
+  // The tuned model ships with rule_boost 0, which switches the keyword safety net
+  // off entirely, and with thresholds of 1.01, which no probability can reach. Those
+  // values maximise macro-F1 on the test set but leave the extension with no margin,
+  // so the deployment overrides them. Set safetyNet false to fall back to the
+  // model's own values.
+  safetyNet: true,
+  ruleBoostOverride: 2.0,
+  nsfwThreshold: 0.35,
+  maliciousThreshold: 0.35,
+  // Re-check a flagged or borderline page once before acting on it.
+  confirmScan: true,
+  // Keep watching pages that play video, because the page never reloads.
+  videoRescanSeconds: 20,
 };
 
 export const HISTORY_CAP = 500;
