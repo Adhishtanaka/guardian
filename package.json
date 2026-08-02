@@ -1,10 +1,11 @@
 {
-  "name": "extension",
+  "name": "guardian-extension",
   "version": "1.0.0",
-  "description": "",
+  "description": "Guardian — on-device NSFW & malicious page detection",
   "main": "index.js",
   "scripts": {
-    "test": "node test_tokenizer.mjs"
+    "test": "node ../tools/test_guardian.mjs && node ../tools/test_tokenizer.mjs",
+    "build": "esbuild options.js --bundle --format=esm --platform=browser --outfile=options.bundle.js && esbuild offscreen.js --bundle --format=esm --platform=browser --outfile=offscreen.bundle.js"
   },
   "keywords": [],
   "author": "",
