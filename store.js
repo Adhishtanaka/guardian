@@ -8,7 +8,6 @@
 export const DEFAULTS = {
   autoScan: true,
   blockFlagged: true,
-  theme: 'system',      // system | light | dark
   tourDone: false,
 };
 

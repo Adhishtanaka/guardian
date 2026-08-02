@@ -7,7 +7,7 @@ import {
   createPinRecord, verifyPin, validatePinFormat, remainingLockout,
 } from './auth.js';
 import {
-  DEFAULTS, getSettings, setSettings, getAllowList, setAllowList,
+  getSettings, setSettings, getAllowList, setAllowList,
   getHistory, clearHistory, getPinRecord, setPinRecord,
   getLockState, setLockState, normalizeDomain,
 } from './store.js';
@@ -21,17 +21,6 @@ const el = (tag, cls, text) => {
   if (text != null) n.textContent = text;
   return n;
 };
-
-// --- theme ----------------------------------------------------------------
-const media = window.matchMedia('(prefers-color-scheme: dark)');
-function applyTheme(pref) {
-  const dark = pref === 'dark' || (pref === 'system' && media.matches);
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-}
-media.addEventListener('change', async () => {
-  const { theme } = await getSettings();
-  if (theme === 'system') applyTheme('system');
-});
 
 // --- PIN gate -------------------------------------------------------------
 let isFirstRun = false;
@@ -97,8 +86,6 @@ async function render() {
   const s = await getSettings();
   $('autoScan').checked = s.autoScan;
   $('blockFlagged').checked = s.blockFlagged;
-  $('theme').value = s.theme;
-  applyTheme(s.theme);
   await renderAllow();
   await renderHistory();
   renderModelInfo();
@@ -220,10 +207,6 @@ $('forgot').addEventListener('click', () => {
 
 $('autoScan').addEventListener('change', (e) => setSettings({ autoScan: e.target.checked }));
 $('blockFlagged').addEventListener('change', (e) => setSettings({ blockFlagged: e.target.checked }));
-$('theme').addEventListener('change', (e) => {
-  setSettings({ theme: e.target.value });
-  applyTheme(e.target.value);
-});
 
 $('allowAdd').addEventListener('click', async () => {
   const msg = $('allowError');
@@ -260,6 +243,5 @@ $('startTour').addEventListener('click', runTour);
 $('lockNow').addEventListener('click', () => location.reload());
 
 (async () => {
-  applyTheme((await getSettings()).theme || DEFAULTS.theme);
   await initLock();
 })();
