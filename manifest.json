@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Parental Control \u2014 NSFW & Malicious Page Detector",
+  "version": "1.0.0",
+  "description": "Classifies the current page as normal, nsfw or malicious using an on-device LiteRT CNN plus Tesseract.js OCR. Nothing leaves your machine.",
+  "permissions": [
+    "tabs",
+    "offscreen",
+    "storage",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Parental Control \u2014 auto-scanning"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "lib/*",
+        "model/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
