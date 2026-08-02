@@ -108,10 +108,30 @@ async function render() {
   $('safetyNet').checked = s.safetyNet;
   $('confirmScan').checked = s.confirmScan;
   $('videoRescanSeconds').value = String(s.videoRescanSeconds);
+  await renderLastScan();
   await renderSiteList('allow');
   await renderSiteList('block');
   await renderHistory();
   renderModelInfo();
+}
+
+async function renderLastScan() {
+  const { lastScan } = await chrome.storage.local.get('lastScan');
+  const el2 = $('lastScan');
+  if (!lastScan) { el2.textContent = 'nothing scanned yet'; return; }
+  const pct = Object.entries(lastScan.probs || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, p]) => `${c} ${(p * 100).toFixed(1)}%`).join(' · ');
+  // OCR character count is the number that matters when a verdict looks wrong:
+  // near zero means the text branch had nothing to work with.
+  const ocr = lastScan.ocrChars === 0
+    ? 'no text read (OCR returned nothing)'
+    : `${lastScan.ocrChars} characters of text read`;
+  el2.textContent =
+    `${lastScan.host || 'page'} → ${lastScan.label} · ${pct} · ${ocr}` +
+    ` · ${lastScan.scans} scan${lastScan.scans > 1 ? 's' : ''}` +
+    (lastScan.ruleFired ? ' · keyword matched' : '') +
+    ` · ${new Date(lastScan.at).toLocaleTimeString()}`;
 }
 
 async function renderModelInfo() {

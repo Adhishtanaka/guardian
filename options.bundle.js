@@ -589,7 +589,20 @@ function remainingLockout(state, now = Date.now()) {
 var DEFAULTS = {
   autoScan: true,
   blockFlagged: true,
-  tourDone: false
+  tourDone: false,
+  // The tuned model ships with rule_boost 0, which switches the keyword safety net
+  // off entirely, and with thresholds of 1.01, which no probability can reach. Those
+  // values maximise macro-F1 on the test set but leave the extension with no margin,
+  // so the deployment overrides them. Set safetyNet false to fall back to the
+  // model's own values.
+  safetyNet: true,
+  ruleBoostOverride: 2,
+  nsfwThreshold: 0.35,
+  maliciousThreshold: 0.35,
+  // Re-check a flagged or borderline page once before acting on it.
+  confirmScan: true,
+  // Keep watching pages that play video, because the page never reloads.
+  videoRescanSeconds: 20
 };
 function normalizeDomain(input) {
   let s2 = String(input || "").trim().toLowerCase();
@@ -706,10 +719,25 @@ async function render() {
   const s2 = await getSettings();
   $2("autoScan").checked = s2.autoScan;
   $2("blockFlagged").checked = s2.blockFlagged;
+  $2("safetyNet").checked = s2.safetyNet;
+  $2("confirmScan").checked = s2.confirmScan;
+  $2("videoRescanSeconds").value = String(s2.videoRescanSeconds);
+  await renderLastScan();
   await renderSiteList("allow");
   await renderSiteList("block");
   await renderHistory();
   renderModelInfo();
+}
+async function renderLastScan() {
+  const { lastScan } = await chrome.storage.local.get("lastScan");
+  const el2 = $2("lastScan");
+  if (!lastScan) {
+    el2.textContent = "nothing scanned yet";
+    return;
+  }
+  const pct = Object.entries(lastScan.probs || {}).sort((a2, b2) => b2[1] - a2[1]).map(([c2, p2]) => `${c2} ${(p2 * 100).toFixed(1)}%`).join(" \xB7 ");
+  const ocr = lastScan.ocrChars === 0 ? "no text read (OCR returned nothing)" : `${lastScan.ocrChars} characters of text read`;
+  el2.textContent = `${lastScan.host || "page"} \u2192 ${lastScan.label} \xB7 ${pct} \xB7 ${ocr} \xB7 ${lastScan.scans} scan${lastScan.scans > 1 ? "s" : ""}` + (lastScan.ruleFired ? " \xB7 keyword matched" : "") + ` \xB7 ${new Date(lastScan.at).toLocaleTimeString()}`;
 }
 async function renderModelInfo() {
   try {
@@ -868,6 +896,12 @@ $2("forgot").addEventListener("click", () => {
 });
 $2("autoScan").addEventListener("change", (e2) => setSettings({ autoScan: e2.target.checked }));
 $2("blockFlagged").addEventListener("change", (e2) => setSettings({ blockFlagged: e2.target.checked }));
+$2("safetyNet").addEventListener("change", (e2) => setSettings({ safetyNet: e2.target.checked }));
+$2("confirmScan").addEventListener("change", (e2) => setSettings({ confirmScan: e2.target.checked }));
+$2("videoRescanSeconds").addEventListener(
+  "change",
+  (e2) => setSettings({ videoRescanSeconds: Number(e2.target.value) })
+);
 $2("allowAdd").addEventListener("click", () => addSite("allow"));
 $2("blockAdd").addEventListener("click", () => addSite("block"));
 $2("allowInput").addEventListener("keydown", (e2) => {

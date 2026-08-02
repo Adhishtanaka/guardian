@@ -1647,17 +1647,19 @@ async function buildViews(bitmap) {
   return views;
 }
 var ruleHits2 = (text) => ruleHits(text, cfg.rule_phrases, cfg.class_names);
-function decide(probs) {
+function decide(probs, opts = {}) {
   const names = cfg.class_names;
   const iN = names.indexOf("nsfw");
   const iM = names.indexOf("malicious");
   const th = cfg.thresholds || {};
+  const tN = opts.nsfwThreshold != null ? opts.nsfwThreshold : th.nsfw;
+  const tM = opts.maliciousThreshold != null ? opts.maliciousThreshold : th.malicious;
   let best = probs.indexOf(Math.max(...probs));
-  if (th.malicious != null && probs[iM] >= th.malicious) best = iM;
-  if (th.nsfw != null && probs[iN] >= th.nsfw) best = iN;
+  if (tM != null && probs[iM] >= tM) best = iM;
+  if (tN != null && probs[iN] >= tN) best = iN;
   return best;
 }
-async function classify(bitmap, ocrText) {
+async function classify(bitmap, ocrText, opts = {}) {
   const views = await buildViews(bitmap);
   const tokens = tokenize2(ocrText);
   const viewsT = Tensor.fromTypedArray(views, [1, cfg.n_views, cfg.image_size, cfg.image_size, 3]);
@@ -1665,18 +1667,23 @@ async function classify(bitmap, ocrText) {
   const outputs = await model.run({ views: viewsT, text: textT });
   const key = Object.keys(outputs)[0];
   const logits = Array.from(await outputs[key].data());
-  const boost = cfg.rule_boost || 0;
+  const boost = opts.ruleBoost != null ? opts.ruleBoost : cfg.rule_boost || 0;
   const rules = ruleHits2(ocrText);
   const fused = logits.map((v, i) => v + boost * rules[i]);
   const probs = softmax(fused);
   viewsT.delete();
   textT.delete();
   Object.values(outputs).forEach((t) => t.delete());
-  const idx = decide(probs);
+  const idx = decide(probs, opts);
+  const label = cfg.class_names[idx];
+  const top = Math.max(...probs);
   return {
-    label: cfg.class_names[idx],
+    label,
     probs: Object.fromEntries(cfg.class_names.map((c, i) => [c, probs[i]])),
-    ocrChars: (ocrText || "").length
+    ocrChars: (ocrText || "").length,
+    ruleFired: rules.some((v) => v > 0),
+    // Low confidence, or a flagged page, is what triggers a confirmation scan.
+    uncertain: top < 0.65
   };
 }
 
@@ -1693,7 +1700,7 @@ async function getWorker() {
   });
   return tesseractWorker;
 }
-async function run(dataUrl) {
+async function run(dataUrl, opts) {
   await init();
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
   let text = "";
@@ -1703,10 +1710,10 @@ async function run(dataUrl) {
   } catch (e) {
     console.warn("OCR failed, image-only:", e);
   }
-  return classify(bitmap, text);
+  return classify(bitmap, text, opts || {});
 }
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (msg?.type !== "classify") return false;
-  run(msg.dataUrl).then(respond).catch((e) => respond({ error: String(e?.message || e) }));
+  run(msg.dataUrl, msg.opts).then(respond).catch((e) => respond({ error: String(e?.message || e) }));
   return true;
 });

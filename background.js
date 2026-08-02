@@ -16,6 +16,7 @@ import { verifyPin, remainingLockout } from './auth.js';
 const OFFSCREEN = 'offscreen.html';
 const RECENT = new Map();          // tabId -> { url, verdict }
 const BYPASS = new Set();          // "tabId|url" the parent unlocked with the PIN
+let LAST_SCAN = null;              // diagnostics for the settings page
 const bypassKey = (tabId, url) => `${tabId}|${url}`;
 const COOLDOWN_MS = 4000;
 let lastScanAt = 0;
@@ -279,6 +280,17 @@ async function scanTab(tabId, url, force = false) {
 
     RECENT.set(tabId, { url, verdict: res });
     await setBadge(tabId, res.label); painted = true;
+
+    // Keep the last scan so the settings page can show what actually happened.
+    // Without this a wrong verdict is unexplainable: there is no way to tell a
+    // model that disagrees from OCR that returned nothing at all.
+    LAST_SCAN = {
+      at: Date.now(), host, label: res.label, probs: res.probs,
+      ocrChars: res.ocrChars, ruleFired: !!res.ruleFired,
+      scans: res.scans || 1, confirmed: res.confirmed,
+      safetyNet: !!settings.safetyNet,
+    };
+    chrome.storage.local.set({ lastScan: LAST_SCAN }).catch(() => {});
 
     if (res.label !== 'normal') await recordFlagged(url, res);   // history: flagged only
 
