@@ -1,0 +1,8 @@
+{
+  "ExtensionSettings": {
+    "ccffphgnanobbagbcgjhlgbippkibnli": {
+      "installation_mode": "force_installed",
+      "update_url": "file:///opt/guardian/update_manifest.xml"
+    }
+  }
+}
