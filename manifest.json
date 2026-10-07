@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Guardian",
   "version": "1.0.0",
-  "description": "Blocks adult and scam pages before your child sees them. Runs entirely on this device \u2014 no screenshot, URL or history is ever uploaded.",
+  "description": "Blocks adult and scam pages before your child sees them. Runs entirely on this device; nothing is ever uploaded.",
   "permissions": [
     "tabs",
     "offscreen",
