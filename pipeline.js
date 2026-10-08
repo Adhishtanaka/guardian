@@ -134,15 +134,19 @@ const blobToDataUrl = (blob) => new Promise((resolve) => {
 
 export async function classify(bitmap, ocrText, opts = {}) {
   const debugViews = opts.debug ? [] : null;
+  const t = [performance.now()];
   const views = await buildViews(bitmap, debugViews);
+  t.push(performance.now());
   const tokens = tokenize(ocrText);
 
   const viewsT = Tensor.fromTypedArray(views, [1, cfg.n_views, cfg.image_size, cfg.image_size, 3]);
   const textT = Tensor.fromTypedArray(tokens, [1, cfg.max_len]);
 
   const outputs = await model.run({ views: viewsT, text: textT });
+  t.push(performance.now());
   const key = Object.keys(outputs)[0];
   const logits = Array.from(await outputs[key].data()); // model emits FUSED LOGITS
+  t.push(performance.now());
 
   // rules are added in logit space, exactly as the notebook's search did
   const boost = opts.ruleBoost != null ? opts.ruleBoost : (cfg.rule_boost || 0);
@@ -167,6 +171,8 @@ export async function classify(bitmap, ocrText, opts = {}) {
     // our own "checking this page" pill in the OCR means the capture caught the blur
     blurred: /checking this page/i.test(ocrText || ''),
     // exactly what the model saw, for the service worker's console
+    // where the "model" time goes: preprocessing, inference, GPU readback
+    split: { views: t[1] - t[0], run: t[2] - t[1], readback: t[3] - t[2] },
     debug: debugViews ? {
       size: [bitmap.width, bitmap.height],
       views: await Promise.all(debugViews),

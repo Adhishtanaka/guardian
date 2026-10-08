@@ -234,8 +234,12 @@ async function captureOnce(tab, opts, wait) {
   // classify the warning card itself (a dark page with a dialog reads as
   // "malicious"), so a blocked page is never re-scanned. Asking the page rather than
   // keeping a set here survives the service worker being restarted.
+  const tPeek = performance.now();
   const peek = await chrome.tabs.sendMessage(tab.id, { type: 'g:peek', wait }).catch(() => null);
+  const tShot = performance.now();
   if (peek?.warned) return { skipped: 'warning on screen' };
+  // the page never repainted unblurred, so the screen still shows the blur
+  if (peek?.painted === false) return { skipped: 'not painted' };
   let dataUrl;
   try {
     // Chrome refuses captures while the tab strip is busy (a drag, or YouTube's
@@ -254,6 +258,7 @@ async function captureOnce(tab, opts, wait) {
     tell(tab.id, 'g:hold');
   }
   const res = await chrome.runtime.sendMessage({ type: 'classify', dataUrl, opts: { ...opts, debug: DEBUG } });
+  if (res?.ms) Object.assign(res.ms, { peek: tShot - tPeek, total: performance.now() - tPeek });
   if (DEBUG) logScan(tab.url, dataUrl, res);
   if (res) delete res.debug;               // don't keep megabytes of images in RECENT
   return res;
@@ -267,7 +272,9 @@ const img = (url, w, h) => console.log('%c ', `font-size:1px;padding:${h / 2}px 
 
 function logScan(url, shot, res) {
   const d = res?.debug;
-  console.groupCollapsed(`[Guardian] ${res?.label ?? 'ERROR'} ${url}`,
+  const ms = res?.ms && Object.entries(res.ms).map(([k, v]) => `${k} ${Math.round(v)}ms`).join(' · ');
+  const sp = res?.split && Object.entries(res.split).map(([k, v]) => `${k} ${Math.round(v)}`).join('/');
+  console.groupCollapsed(`[Guardian] ${res?.label ?? 'ERROR'} ${url} ${ms ? `(${ms}; model = ${sp})` : ''}`,
     res?.probs ? Object.fromEntries(Object.entries(res.probs).map(([k, v]) => [k, +v.toFixed(3)])) : res);
   console.log('screenshot (what was captured)', d?.size);
   img(shot, 480, 300);
@@ -368,7 +375,7 @@ async function scanTab(tabId, url, force = false) {
     // to do with the model: the page was still painting, a video was mid-transition,
     // or OCR caught the page before the text rendered. Rather than act on one frame,
     // look again and take the more cautious of the two.
-    if (settings.confirmScan && res && !res.error
+    if (settings.confirmScan && res && !res.error && !res.skipped
         && (res.label !== 'normal' || res.uncertain)) {
       await sleep(900);
       const second = await capture(tab, opts);
@@ -377,7 +384,14 @@ async function scanTab(tabId, url, force = false) {
       }
     }
 
-    if (res?.skipped) { painted = true; return; }   // blocked page: keep its verdict
+    if (res?.skipped) {
+      console.warn('[Guardian] scan skipped:', res.skipped);
+      // window covered or page not drawing yet: try again rather than judge blur
+      if (res.skipped === 'not painted') {
+        setTimeout(() => scanTab(tabId, url, true), COOLDOWN_MS);
+      }
+      painted = true; return;                       // blocked page keeps its verdict
+    }
     if (!res || res.error) {
       tell(tabId, 'g:release');        // fail open, as the page always did on error
       await setBadge(tabId, 'error'); painted = true;

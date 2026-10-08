@@ -62,7 +62,9 @@ async function getWorker() {
 }
 
 async function run(dataUrl, opts) {
+  const t0 = performance.now();
   await init();
+  const t1 = performance.now();
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
 
   let text = '';
@@ -74,7 +76,10 @@ async function run(dataUrl, opts) {
     // exactly so it degrades gracefully when OCR is unavailable.
     console.warn('OCR failed, image-only:', e);
   }
-  return classify(bitmap, text, opts || {});
+  const t2 = performance.now();
+  const res = await classify(bitmap, text, opts || {});
+  res.ms = { init: t1 - t0, ocr: t2 - t1, model: performance.now() - t2 };
+  return res;
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {

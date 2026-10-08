@@ -40,10 +40,17 @@ const hold = () => {
   held = true; document.documentElement.classList.add(CLS);
   clearTimeout(failsafe); failsafe = setTimeout(release, FAILSAFE_MS);
 };
-const frames = (n) => new Promise((r) => {
-  const step = () => (n-- > 0 ? requestAnimationFrame(step) : r());
-  step();
-});
+// Resolves true once n frames have really been painted. rAF does not fire while
+// Chrome is not drawing the page (window covered by another window, tab hidden,
+// heavy load), and then a capture returns the last frame drawn: the blurred one.
+// So give up after 300 ms and report false instead of pretending it painted.
+const frames = (n) => Promise.race([
+  new Promise((r) => {
+    const step = () => (n-- > 0 ? requestAnimationFrame(step) : r(true));
+    step();
+  }),
+  new Promise((r) => setTimeout(() => r(false), 300)),
+]);
 
 chrome.storage.local.get('blurUntilChecked')
   .then(({ blurUntilChecked }) => { if (blurUntilChecked === false) { enabled = false; release(); } })
@@ -58,7 +65,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     document.documentElement.classList.remove(CLS);
     // Two frames was not enough on heavy pages (YouTube): the GPU was still
     // compositing the blurred layer and the capture caught blur. Give it a beat.
-    frames(2).then(() => setTimeout(() => respond({ warned: false }), msg.wait ?? 120));
+    frames(2).then((painted) => {
+      if (!painted) {                  // nothing new on screen: don't let it capture
+        if (held) document.documentElement.classList.add(CLS);
+        return respond({ warned: false, painted: false });
+      }
+      setTimeout(() => respond({ warned: false, painted: true }), msg.wait ?? 120);
+    });
     return true;
   }
   if (msg?.type === 'g:hold') {        // capture done; back under blur if undecided
