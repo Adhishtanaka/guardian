@@ -20,6 +20,7 @@ let lastUrl = location.href;
 function ping(reason) {
   const now = Date.now();
   if (now - lastPing < MIN_GAP_MS) return;
+  if (globalThis.__gWarn?.isConnected) return;   // blocked; the overlay itself is DOM churn
   lastPing = now;
   send('pageChanged', reason);
 }

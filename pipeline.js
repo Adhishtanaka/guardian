@@ -59,13 +59,14 @@ export const tokenize = (text) => tokenizeText(text, vocabIndex, cfg.max_len);
  * browser chrome, so there is nothing to crop here — cropping again would cut real
  * page content and shift the input away from what the model was trained on.
  */
-export async function buildViews(bitmap) {
+export async function buildViews(bitmap, debugViews = null) {
   const S = cfg.image_size;
   const views = new Float32Array(cfg.n_views * S * S * 3);
   const canvas = new OffscreenCanvas(S, S);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
   const writeView = (idx) => {
+    if (debugViews) debugViews.push(canvas.convertToBlob().then(blobToDataUrl));
     const { data } = ctx.getImageData(0, 0, S, S);
     let o = idx * S * S * 3;
     for (let p = 0; p < data.length; p += 4) {
@@ -125,8 +126,15 @@ function decide(probs, opts = {}) {
  * confident and wrong, which is exactly the reported failure on a search results
  * page whose text plainly says what it is.
  */
+const blobToDataUrl = (blob) => new Promise((resolve) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.readAsDataURL(blob);
+});
+
 export async function classify(bitmap, ocrText, opts = {}) {
-  const views = await buildViews(bitmap);
+  const debugViews = opts.debug ? [] : null;
+  const views = await buildViews(bitmap, debugViews);
   const tokens = tokenize(ocrText);
 
   const viewsT = Tensor.fromTypedArray(views, [1, cfg.n_views, cfg.image_size, cfg.image_size, 3]);
@@ -156,5 +164,13 @@ export async function classify(bitmap, ocrText, opts = {}) {
     ruleFired: rules.some((v) => v > 0),
     // Low confidence, or a flagged page, is what triggers a confirmation scan.
     uncertain: top < 0.65,
+    // our own "checking this page" pill in the OCR means the capture caught the blur
+    blurred: /checking this page/i.test(ocrText || ''),
+    // exactly what the model saw, for the service worker's console
+    debug: debugViews ? {
+      size: [bitmap.width, bitmap.height],
+      views: await Promise.all(debugViews),
+      logits, rules, ocrText: ocrText || '',
+    } : undefined,
   };
 }

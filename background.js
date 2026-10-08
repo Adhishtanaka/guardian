@@ -55,13 +55,22 @@ const IDLE_ICON = {
 };
 let animTimer = null;
 
+// chrome.action.setIcon({ path }) loads the image in its JS binding, and if the tab
+// closed meanwhile it reports "No tab with id" as an unchecked lastError that
+// .catch() never sees. Check the tab first.
+// ponytail: still a tiny race between get() and setIcon(); preload ImageData if it matters.
+async function setIcon(tabId, path) {
+  try { await chrome.tabs.get(tabId); } catch { return false; }
+  await chrome.action.setIcon({ tabId, path }).catch(() => {});
+  return true;
+}
+
 function startScanAnimation(tabId) {
   stopScanAnimation();
   let f = 0;
   chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
-  animTimer = setInterval(() => {
-    chrome.action.setIcon({ tabId, path: `icons/scan/f${f % SCAN_FRAMES}.png` })
-      .catch(() => {});
+  animTimer = setInterval(async () => {
+    if (!(await setIcon(tabId, `icons/scan/f${f % SCAN_FRAMES}.png`))) stopScanAnimation();
     f++;
   }, 90);
 }
@@ -80,7 +89,7 @@ async function setBadge(tabId, kind) {
   const st = STATE[kind] || STATE.error;
   const name = STATE[kind] ? kind : 'error';
   try {
-    await chrome.action.setIcon({ tabId, path: statePath(name) });
+    if (!(await setIcon(tabId, statePath(name)))) return;
     await chrome.action.setBadgeText({ tabId, text: st.text });
     await chrome.action.setBadgeBackgroundColor({ tabId, color: st.color });
     await chrome.action.setTitle({ tabId, title: `Guardian — ${st.title}` });
@@ -96,7 +105,9 @@ async function setBadge(tabId, kind) {
  * to a page that might be hostile.
  */
 function showWarning(label, probs, host) {
-  if (document.getElementById('__g_warn')) return;
+  // The page can fake an element id, but not this: executeScript runs in the
+  // extension's isolated world, the same globals blur.js and observer.js see.
+  if (globalThis.__gWarn?.isConnected) return;
   const pct = Math.round((probs?.[label] || 0) * 100);
   const S = (n, css) => Object.assign(n.style, css);
   const mk = (tag, css, text) => {
@@ -113,6 +124,7 @@ function showWarning(label, probs, host) {
     font: '15px/1.55 -apple-system,system-ui,sans-serif',
   });
   wrap.id = '__g_warn';
+  globalThis.__gWarn = wrap;
 
   const card = mk('div', {
     background: '#ffffff', color: '#13211a', borderRadius: '16px', padding: '30px 32px',
@@ -199,7 +211,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tell = (tabId, type) => chrome.tabs.sendMessage(tabId, { type }).catch(() => {});
 const PENDING = new Set();         // tabs with a scan queued behind the cooldown
 
+// A capture that still caught the blur is meaningless, so look again with a longer
+// unblur. ponytail: two tries; after that the verdict stands as captured.
 async function capture(tab, opts) {
+  const res = await captureOnce(tab, opts, 120);
+  if (!res?.blurred || res.skipped) return res;
+  console.warn('[Guardian] capture caught the blur, retrying');
+  return captureOnce(tab, opts, 400);
+}
+
+async function captureOnce(tab, opts, wait) {
   // A tab can close between the scan starting and the capture, which surfaces as
   // "Unchecked runtime.lastError: No tab with id". Confirm it is still there.
   try {
@@ -209,14 +230,54 @@ async function capture(tab, opts) {
   }
   // blur.js keeps the page blurred until a verdict, so lift it for the capture or
   // the model would be classifying blur.
-  await tell(tab.id, 'g:peek');
+  // blur.js answers whether our warning is on screen. If it is, a capture would
+  // classify the warning card itself (a dark page with a dialog reads as
+  // "malicious"), so a blocked page is never re-scanned. Asking the page rather than
+  // keeping a set here survives the service worker being restarted.
+  const peek = await chrome.tabs.sendMessage(tab.id, { type: 'g:peek', wait }).catch(() => null);
+  if (peek?.warned) return { skipped: 'warning on screen' };
   let dataUrl;
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    // Chrome refuses captures while the tab strip is busy (a drag, or YouTube's
+    // fullscreen/miniplayer churn): "Tabs cannot be edited right now". It is
+    // momentary, so retry briefly instead of failing the scan open.
+    for (let i = 0; ; i++) {
+      try {
+        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        break;
+      } catch (e) {
+        if (i >= 4 || !/cannot be edited right now/i.test(e?.message)) throw e;
+        await sleep(250);
+      }
+    }
   } finally {
     tell(tab.id, 'g:hold');
   }
-  return chrome.runtime.sendMessage({ type: 'classify', dataUrl, opts });
+  const res = await chrome.runtime.sendMessage({ type: 'classify', dataUrl, opts: { ...opts, debug: DEBUG } });
+  if (DEBUG) logScan(tab.url, dataUrl, res);
+  if (res) delete res.debug;               // don't keep megabytes of images in RECENT
+  return res;
+}
+
+// Logs every screenshot and its OCR text, so only for unpacked dev installs:
+// a Web Store install has update_url in its manifest and never logs.
+const DEBUG = !('update_url' in chrome.runtime.getManifest());
+const img = (url, w, h) => console.log('%c ', `font-size:1px;padding:${h / 2}px ${w / 2}px;` +
+  `background:url(${url}) no-repeat center/contain`);
+
+function logScan(url, shot, res) {
+  const d = res?.debug;
+  console.groupCollapsed(`[Guardian] ${res?.label ?? 'ERROR'} ${url}`,
+    res?.probs ? Object.fromEntries(Object.entries(res.probs).map(([k, v]) => [k, +v.toFixed(3)])) : res);
+  console.log('screenshot (what was captured)', d?.size);
+  img(shot, 480, 300);
+  if (d) {
+    console.log('model views: [0] whole page letterboxed, [1-4] quadrants');
+    d.views.forEach((v) => img(v, 160, 160));
+    console.log('logits', d.logits, 'rule hits', d.rules);
+    console.log(`OCR (${d.ocrText.length} chars):`, d.ocrText.slice(0, 600));
+  }
+  console.groupEnd();
 }
 
 /**
@@ -311,11 +372,12 @@ async function scanTab(tabId, url, force = false) {
         && (res.label !== 'normal' || res.uncertain)) {
       await sleep(900);
       const second = await capture(tab, opts);
-      if (second && !second.error) {
+      if (second && !second.error && !second.skipped) {
         res = mergeVerdicts(res, second);
       }
     }
 
+    if (res?.skipped) { painted = true; return; }   // blocked page: keep its verdict
     if (!res || res.error) {
       tell(tabId, 'g:release');        // fail open, as the page always did on error
       await setBadge(tabId, 'error'); painted = true;
@@ -358,7 +420,7 @@ async function scanTab(tabId, url, force = false) {
   } finally {
     stopScanAnimation();
     // nothing decided (e.g. tab went inactive mid-scan) — leave the plain shield
-    if (!painted) chrome.action.setIcon({ tabId, path: IDLE_ICON }).catch(() => {});
+    if (!painted) setIcon(tabId, IDLE_ICON);
     scanning = false;
   }
 }
@@ -383,6 +445,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 if (chrome.webNavigation) {
   chrome.webNavigation.onHistoryStateUpdated.addListener(({ tabId, url, frameId }) => {
     if (frameId !== 0 || !/^https?:/.test(url)) return;
+    if (!BYPASS.has(bypassKey(tabId, url))) tell(tabId, 'g:blur');
     setTimeout(() => scanTab(tabId, url, true), 1200);
   });
 }

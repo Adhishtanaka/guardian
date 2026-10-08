@@ -10,8 +10,13 @@
  */
 
 const CLS = '__g_blur';
+// The block overlay background.js injects, held in the isolated world as
+// globalThis.__gWarn. Never look it up by id: a page could plant a fake one.
+const warned = () => !!globalThis.__gWarn?.isConnected;
 const FAILSAFE_MS = 15000;
 let held = true;                       // still waiting for a verdict
+let enabled = true;                    // the parent's "blur until checked" setting
+let failsafe = null;
 
 const style = document.createElement('style');
 style.textContent = `
@@ -23,26 +28,37 @@ style.textContent = `
     font: 600 14px -apple-system,system-ui,sans-serif;
   }`;
 document.documentElement.append(style);
-document.documentElement.classList.add(CLS);
 
-const release = () => { held = false; document.documentElement.classList.remove(CLS); };
+const release = () => {
+  held = false; clearTimeout(failsafe);
+  document.documentElement.classList.remove(CLS);
+};
+// ponytail: fail open if no verdict ever arrives (worker crashed, extension
+// reloaded). Same choice as a scan error. Raise FAILSAFE_MS if that is too lenient.
+const hold = () => {
+  if (!enabled) return;
+  held = true; document.documentElement.classList.add(CLS);
+  clearTimeout(failsafe); failsafe = setTimeout(release, FAILSAFE_MS);
+};
 const frames = (n) => new Promise((r) => {
   const step = () => (n-- > 0 ? requestAnimationFrame(step) : r());
   step();
 });
 
 chrome.storage.local.get('blurUntilChecked')
-  .then(({ blurUntilChecked }) => { if (blurUntilChecked === false) release(); })
+  .then(({ blurUntilChecked }) => { if (blurUntilChecked === false) { enabled = false; release(); } })
   .catch(release);
 
-// ponytail: fail open if no verdict ever arrives (worker crashed, extension
-// reloaded). Same choice as a scan error. Raise FAILSAFE_MS if that is too lenient.
-setTimeout(release, FAILSAFE_MS);
+hold();
 
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (msg?.type === 'g:peek') {        // unblur just long enough to be captured
+    // blocked page: the warning stays, nothing to capture, keep the blur
+    if (warned()) { respond({ warned: true }); return false; }
     document.documentElement.classList.remove(CLS);
-    frames(2).then(() => respond(true));
+    // Two frames was not enough on heavy pages (YouTube): the GPU was still
+    // compositing the blurred layer and the capture caught blur. Give it a beat.
+    frames(2).then(() => setTimeout(() => respond({ warned: false }), msg.wait ?? 120));
     return true;
   }
   if (msg?.type === 'g:hold') {        // capture done; back under blur if undecided
@@ -50,5 +66,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     return false;
   }
   if (msg?.type === 'g:release') { release(); return false; }
+  // SPA route change (dev.to, YouTube...): new page, same document, so blur again.
+  // A stale warning would cover the new page and get captured, so drop it too.
+  if (msg?.type === 'g:blur') { globalThis.__gWarn?.remove(); hold(); return false; }
   return false;
 });
