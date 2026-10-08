@@ -107,6 +107,7 @@ async function render() {
   $('blockFlagged').checked = s.blockFlagged;
   $('safetyNet').checked = s.safetyNet;
   $('confirmScan').checked = s.confirmScan;
+  $('blurUntilChecked').checked = s.blurUntilChecked;
   $('videoRescanSeconds').value = String(s.videoRescanSeconds);
   await renderLastScan();
   await renderSiteList('allow');
@@ -289,6 +290,8 @@ $('autoScan').addEventListener('change', (e) => setSettings({ autoScan: e.target
 $('blockFlagged').addEventListener('change', (e) => setSettings({ blockFlagged: e.target.checked }));
 $('safetyNet').addEventListener('change', (e) => setSettings({ safetyNet: e.target.checked }));
 $('confirmScan').addEventListener('change', (e) => setSettings({ confirmScan: e.target.checked }));
+$('blurUntilChecked').addEventListener('change',
+  (e) => setSettings({ blurUntilChecked: e.target.checked }));
 $('videoRescanSeconds').addEventListener('change',
   (e) => setSettings({ videoRescanSeconds: Number(e.target.value) }));
 

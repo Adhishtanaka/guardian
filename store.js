@@ -20,6 +20,8 @@ export const DEFAULTS = {
   maliciousThreshold: 0.35,
   // Re-check a flagged or borderline page once before acting on it.
   confirmScan: true,
+  // Blur each new page until its first scan finishes (blur.js reads this directly).
+  blurUntilChecked: true,
   // Keep watching pages that play video, because the page never reloads.
   videoRescanSeconds: 20,
 };

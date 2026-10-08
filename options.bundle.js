@@ -601,6 +601,8 @@ var DEFAULTS = {
   maliciousThreshold: 0.35,
   // Re-check a flagged or borderline page once before acting on it.
   confirmScan: true,
+  // Blur each new page until its first scan finishes (blur.js reads this directly).
+  blurUntilChecked: true,
   // Keep watching pages that play video, because the page never reloads.
   videoRescanSeconds: 20
 };
@@ -721,6 +723,7 @@ async function render() {
   $2("blockFlagged").checked = s2.blockFlagged;
   $2("safetyNet").checked = s2.safetyNet;
   $2("confirmScan").checked = s2.confirmScan;
+  $2("blurUntilChecked").checked = s2.blurUntilChecked;
   $2("videoRescanSeconds").value = String(s2.videoRescanSeconds);
   await renderLastScan();
   await renderSiteList("allow");
@@ -898,6 +901,10 @@ $2("autoScan").addEventListener("change", (e2) => setSettings({ autoScan: e2.tar
 $2("blockFlagged").addEventListener("change", (e2) => setSettings({ blockFlagged: e2.target.checked }));
 $2("safetyNet").addEventListener("change", (e2) => setSettings({ safetyNet: e2.target.checked }));
 $2("confirmScan").addEventListener("change", (e2) => setSettings({ confirmScan: e2.target.checked }));
+$2("blurUntilChecked").addEventListener(
+  "change",
+  (e2) => setSettings({ blurUntilChecked: e2.target.checked })
+);
 $2("videoRescanSeconds").addEventListener(
   "change",
   (e2) => setSettings({ videoRescanSeconds: Number(e2.target.value) })

@@ -180,17 +180,24 @@ function showWarning(label, probs, host) {
   unlockBtn.onclick = tryPin;
   pin.onkeydown = (e) => { if (e.key === 'Enter') tryPin(); };
 
+  // also lift the "checking" blur that blur.js left under the warning
+  const reveal = () => { wrap.remove(); document.documentElement.classList.remove('__g_blur'); };
   onceBtn.onclick = async () => {
     await chrome.runtime.sendMessage({ type: 'bypassOnce', url: location.href }).catch(() => {});
-    wrap.remove();
+    reveal();
   };
   alwaysBtn.onclick = async () => {
     await chrome.runtime.sendMessage({ type: 'allowAlways', host }).catch(() => {});
-    wrap.remove();
+    reveal();
   };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Messages to blur.js. A tab without it (restricted page, opened before install)
+// just rejects, which is fine.
+const tell = (tabId, type) => chrome.tabs.sendMessage(tabId, { type }).catch(() => {});
+const PENDING = new Set();         // tabs with a scan queued behind the cooldown
 
 async function capture(tab, opts) {
   // A tab can close between the scan starting and the capture, which surfaces as
@@ -200,7 +207,15 @@ async function capture(tab, opts) {
   } catch {
     return { error: 'tab closed' };
   }
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  // blur.js keeps the page blurred until a verdict, so lift it for the capture or
+  // the model would be classifying blur.
+  await tell(tab.id, 'g:peek');
+  let dataUrl;
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } finally {
+    tell(tab.id, 'g:hold');
+  }
   return chrome.runtime.sendMessage({ type: 'classify', dataUrl, opts });
 }
 
@@ -221,13 +236,27 @@ function mergeVerdicts(a, b) {
 
 async function scanTab(tabId, url, force = false) {
   const now = Date.now();
-  if (scanning || now - lastScanAt < COOLDOWN_MS) return;
+  if (scanning || now - lastScanAt < COOLDOWN_MS) {
+    // Dropping the scan would leave a freshly loaded page blurred until the
+    // failsafe, so queue one retry per tab instead.
+    if (!PENDING.has(tabId)) {
+      PENDING.add(tabId);
+      setTimeout(() => { PENDING.delete(tabId); scanTab(tabId, url, force); }, COOLDOWN_MS);
+    }
+    return;
+  }
   // A reload, an SPA route change or a big DOM swap all count as a new page,
   // so they pass force and bypass the "already judged this URL" cache.
-  if (!force && RECENT.get(tabId)?.url === url) return;
+  const known = RECENT.get(tabId);
+  if (!force && known?.url === url) {
+    if (known.verdict.label !== 'nsfw' && known.verdict.label !== 'malicious') {
+      tell(tabId, 'g:release');
+    }
+    return;
+  }
 
   const settings = await getSettings();
-  if (!settings.autoScan) return;
+  if (!settings.autoScan) return void tell(tabId, 'g:release');
 
   let host = '';
   try { host = new URL(url).hostname; } catch { /* not a normal page */ }
@@ -239,6 +268,7 @@ async function scanTab(tabId, url, force = false) {
     if (listed === 'allowed') {
       RECENT.set(tabId, { url, verdict: { label: 'allowed' } });
       await setBadge(tabId, 'allowed');
+      tell(tabId, 'g:release');
       return;
     }
     if (listed === 'blocked') {
@@ -287,6 +317,7 @@ async function scanTab(tabId, url, force = false) {
     }
 
     if (!res || res.error) {
+      tell(tabId, 'g:release');        // fail open, as the page always did on error
       await setBadge(tabId, 'error'); painted = true;
       RECENT.set(tabId, { url, verdict: { label: 'error', error: res?.error } });
       return;
@@ -311,14 +342,18 @@ async function scanTab(tabId, url, force = false) {
     const { blockFlagged } = await getSettings();
     // a one-time "show anyway" survives until the tab navigates elsewhere
     if (blockFlagged && res.label !== 'normal' && !BYPASS.has(bypassKey(tabId, url))) {
+      // stays blurred underneath the warning
       chrome.scripting.executeScript({
         target: { tabId },
         func: showWarning,
         args: [res.label, res.probs, host],
       }).catch(() => { /* restricted page */ });
+    } else {
+      tell(tabId, 'g:release');
     }
   } catch (e) {
     console.warn('scan failed:', e);
+    tell(tabId, 'g:release');
     await setBadge(tabId, 'error'); painted = true;
   } finally {
     stopScanAnimation();
