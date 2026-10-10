@@ -1,6 +1,6 @@
 {
   "name": "guardian-extension",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Guardian — on-device NSFW & malicious page detection",
   "main": "index.js",
   "scripts": {
